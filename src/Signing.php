@@ -842,6 +842,7 @@ final class Signing
             'chain_head' => $events === [] ? EventChain::GENESIS : $events[count($events) - 1]['hash'],
             'completion' => $env['completion'],
             'created_at' => $env['created_at'], 'sent_at' => $env['sent_at'], 'completed_at' => $env['completed_at'],
+            'created_by' => $env['created_by'] ?? null,
         ];
     }
 
