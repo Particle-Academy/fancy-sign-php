@@ -1,0 +1,68 @@
+{
+    "name": "particle-academy/fancy-sign",
+    "description": "E-signature for PHP, designed to support simple electronic signatures (SES): envelopes, signers with email one-time codes to view and to accept, consent and intent captured as hashes, signature/initials/date fields with an auto-appended signature page, a per-envelope hash-chained audit trail, an Ed25519-sealed completion record and a certificate of completion. Standard library only; PDF by fine-print. Framework-free core plus a Laravel bridge.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "e-signature",
+        "esignature",
+        "signature",
+        "envelope",
+        "audit-trail",
+        "pdf",
+        "laravel",
+        "particle-academy"
+    ],
+    "homepage": "https://github.com/Particle-Academy/fancy-sign-php",
+    "support": {
+        "issues": "https://github.com/Particle-Academy/fancy-sign-php/issues",
+        "source": "https://github.com/Particle-Academy/fancy-sign-php"
+    },
+    "authors": [
+        {
+            "name": "Particle Academy",
+            "homepage": "https://github.com/Particle-Academy"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "ext-sodium": "*",
+        "particle-academy/fine-print": ">=0.8.0 <2.0"
+    },
+    "require-dev": {
+        "laravel/framework": "^13.30",
+        "pestphp/pest": "^4.0|^5.0"
+    },
+    "suggest": {
+        "illuminate/support": "Only for the optional Laravel bridge: migrations, sender and signer routes, mail through the host's mailer. Laravel 13. The framework-free Signing service needs none of it."
+    },
+    "autoload": {
+        "psr-4": {
+            "FancySign\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "FancySign\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "FancySign\\Laravel\\FancySignServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}

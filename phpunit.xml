@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="vendor/autoload.php" colors="true" cacheDirectory=".phpunit.cache" failOnWarning="true" failOnRisky="true">
+    <testsuites><testsuite name="FancySign"><directory>tests</directory></testsuite></testsuites>
+    <source><include><directory>src</directory></include></source>
+    <php>
+        <!-- TestApp builds an in-memory SQLite connection; forced here too (both
+             $_ENV and $_SERVER) so nothing can ever reach a real database. -->
+        <env name="DB_CONNECTION" value="sqlite" force="true"/>
+        <env name="DB_DATABASE" value=":memory:" force="true"/>
+        <server name="DB_CONNECTION" value="sqlite" force="true"/>
+        <server name="DB_DATABASE" value=":memory:" force="true"/>
+        <!-- No provider keys, ever, in a test run. -->
+        <env name="ANTHROPIC_API_KEY" value="" force="true"/>
+        <env name="OPENAI_API_KEY" value="" force="true"/>
+        <server name="ANTHROPIC_API_KEY" value="" force="true"/>
+        <server name="OPENAI_API_KEY" value="" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+    </php>
+</phpunit>

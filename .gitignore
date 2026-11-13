@@ -4,3 +4,6 @@ composer.lock
 .phpunit.cache/
 .idea/
 .DS_Store
+composer.local.json
+composer.local.lock
+*.log
