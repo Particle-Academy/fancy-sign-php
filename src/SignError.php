@@ -7,8 +7,9 @@ namespace FancySign;
 use RuntimeException;
 
 /**
- * Every refusal the package makes, with a code from a CLOSED set. The wire
- * answer is `{"error": {"code", "message"}}` with `status`.
+ * Every refusal the package makes, with a code from a CLOSED set. On the wire
+ * it is the kit-wide error envelope (CC-fancy-0031, fancy-conformance
+ * `suites/http/SPEC.md` section 1), see {@see envelope()}.
  *
  * Redaction: an unknown, expired or wrong code all surface as `otp_invalid`,
  * so a caller cannot tell which; the precise reason is in the `otp.failed`
@@ -50,9 +51,20 @@ final class SignError extends RuntimeException
         parent::__construct($message);
     }
 
-    /** @return array{error: array{code: string, message: string}} */
-    public function toArray(): array
+    /**
+     * The kit-wide error envelope. A 422 is `validation_failed` with this
+     * error's code as its one item (the envelope keeps `errors` for 422s and
+     * only for them); every other status carries the code at the top level.
+     *
+     * @return array<string, mixed>
+     */
+    public function envelope(string $requestId): array
     {
-        return ['error' => ['code' => $this->errorCode, 'message' => $this->getMessage()]];
+        if ($this->status === 422) {
+            return ['error' => 'validation_failed', 'message' => $this->getMessage(),
+                'errors' => [['error' => $this->errorCode, 'message' => $this->getMessage()]], 'requestId' => $requestId];
+        }
+
+        return ['error' => $this->errorCode, 'message' => $this->getMessage(), 'requestId' => $requestId];
     }
 }

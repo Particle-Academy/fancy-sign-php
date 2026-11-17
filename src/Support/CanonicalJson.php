@@ -27,16 +27,19 @@ final class CanonicalJson
         return json_encode(self::normalise($value), self::FLAGS);
     }
 
+    /**
+     * A stdClass is ALWAYS an object, whatever its keys: `{"0": "a"}` decoded
+     * with assoc=false stays an object, as it is in JavaScript. A PHP array is
+     * a list only when it is one (`array_is_list`), and otherwise an object,
+     * built as a stdClass so that sorting cannot turn it into a list.
+     */
     private static function normalise(mixed $value): mixed
     {
         if (is_float($value)) {
             throw new InvalidArgumentException('Canonical JSON refuses floats; use an integer or a string.');
         }
         if ($value instanceof stdClass) {
-            $value = (array) $value;
-            if ($value === []) {
-                return new stdClass;
-            }
+            return self::object(get_object_vars($value));
         }
         if (! is_array($value)) {
             return $value;
@@ -44,10 +47,17 @@ final class CanonicalJson
         if (array_is_list($value)) {
             return array_map(self::normalise(...), $value);
         }
-        ksort($value, SORT_STRING);
-        $out = [];
-        foreach ($value as $key => $item) {
-            $out[(string) $key] = self::normalise($item);
+
+        return self::object($value);
+    }
+
+    /** @param array<array-key, mixed> $members */
+    private static function object(array $members): stdClass
+    {
+        ksort($members, SORT_STRING);
+        $out = new stdClass;
+        foreach ($members as $key => $item) {
+            $out->{(string) $key} = self::normalise($item);
         }
 
         return $out;

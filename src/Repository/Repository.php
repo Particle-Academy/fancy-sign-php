@@ -31,7 +31,13 @@ interface Repository
      */
     public function appendEvent(string $envelopeId, callable $build): array;
 
-    /** @return list<array<string, mixed>> in seq order */
+    /**
+     * In seq order. A store that decodes `data` from JSON must keep JSON
+     * objects as objects (stdClass, `json_decode($json, false)`): an object
+     * with keys "0", "1", ... read back as a PHP list would hash differently.
+     *
+     * @return list<array<string, mixed>>
+     */
     public function events(string $envelopeId): array;
 
     public function putLink(string $tokenHash, string $envelopeId, string $signerId): void;

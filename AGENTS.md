@@ -37,8 +37,10 @@ published. Find it then with `search-backend-packages` (stack `php`).
   `X-Fancy-Sign-Session` header after the view code, and public
   `POST /fancy-sign/verify` and `GET /fancy-sign/public-key`. The full list is
   in the README.
-- **Errors** are `{"error": {"code", "message"}}`, codes from the closed set
-  `FancySign\SignError::CODES`.
+- **Errors** are the kit-wide error envelope, `{"error", "message",
+  "requestId"}`, codes from the closed set `FancySign\SignError::CODES`. A 422
+  code is `"error": "validation_failed"` with the code in `errors[0].error`:
+  read it there.
 - **Without Laravel:** `new Signing(repo:, mailer:, sealSecretKey:, appKey:, linkUrl:)`,
   then `create(...)` and `send(...)`. Implement `FancySign\Repository\Repository`
   for real storage (`InMemoryRepository` is for tests).

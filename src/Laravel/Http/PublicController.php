@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FancySign\Laravel\Http;
 
+use FancySign\Chain\EventChain;
 use FancySign\SignError;
 use FancySign\Signing;
 use FancySign\Verify\Verifier;
@@ -36,7 +37,7 @@ final class PublicController extends Controller
             $pdf = $this->part($request, 'pdf');
             $record = json_decode($this->part($request, 'completion') ?? '', true, 64);
             $eventsRaw = $this->part($request, 'events');
-            $events = $eventsRaw === null ? null : json_decode($eventsRaw, true, 64);
+            $events = $eventsRaw === null ? null : EventChain::rowsFromJson($eventsRaw);
             if ($pdf === null || ($eventsRaw !== null && ! is_array($events))) {
                 throw new SignError('invalid_request', 'Send pdf and completion, and events as a JSON list when present.');
             }

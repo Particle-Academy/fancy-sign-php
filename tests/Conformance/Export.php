@@ -48,6 +48,12 @@ final class Export
     /** The fancy-conformance release these suites join. */
     public const SINCE = '0.51.0';
 
+    /** The fixture release that added the index-key and error-envelope rows. */
+    public const SINCE_052 = '0.52.0';
+
+    /** The `since` new rows get, while a later block is being added. */
+    private ?string $since = null;
+
     public const SUITES = ['sign/chain', 'sign/completion', 'sign/fields', 'sign/otp'];
 
     /** A fixed seal seed (32 bytes, hex) so seals are reproducible. Test data, never a real key. */
@@ -119,7 +125,7 @@ final class Export
     {
         return match ("{$suite} {$fn}") {
             'sign/chain canonical' => self::guard(fn () => CanonicalJson::encode(self::objects($input['value'], $input['objects'] ?? []))),
-            'sign/chain hash' => EventChain::hashOf((string) $input['prev_hash'], self::event($input['event'])),
+            'sign/chain hash' => EventChain::hashOf((string) $input['prev_hash'], self::event(self::objects($input['event'], $input['objects'] ?? []))),
             'sign/chain append' => self::guard(function () use ($input) {
                 // Empty data is the empty OBJECT on the wire (it hashes as {}); PHP holds it as [].
                 $e = EventChain::append($input['last'] ?? null, self::event($input['event']));
@@ -141,6 +147,7 @@ final class Export
             'sign/fields placement' => self::placementOf($input),
             'sign/otp codeDigest' => Signing::codeDigest((string) $input['app_key'], (string) $input['envelope_id'], (string) $input['signer_id'], (string) $input['purpose'], (string) $input['code']),
             'sign/otp errorCodes' => SignError::CODES,
+            'sign/otp envelope' => (new SignError((string) $input['code'], (string) $input['message']))->envelope((string) $input['request_id']),
             'sign/otp scenario' => self::scenario($input),
         };
     }
@@ -156,22 +163,28 @@ final class Export
     }
 
     /**
-     * JSON has one object type and PHP decodes `{}` as `[]`. A canonical row
-     * that needs an EMPTY object names its path in `objects` (dot paths, `""`
-     * for the root), and the runner turns those into stdClass.
+     * PHP decodes a JSON object as an array, so `{}` and `[]`, and `{"0": "a"}`
+     * and `["a"]`, arrive identical. A row names the paths that are OBJECTS in
+     * `objects` (dot paths, `""` for the root), and the runner turns those into
+     * stdClass. A port that keeps JSON objects as objects can ignore it.
      *
      * @param  list<string>  $paths
      */
     private static function objects(mixed $value, array $paths, string $at = ''): mixed
     {
-        if (in_array($at, $paths, true) && $value === []) {
-            return new \stdClass;
-        }
         if (! is_array($value)) {
             return $value;
         }
         foreach ($value as $k => $v) {
             $value[$k] = self::objects($v, $paths, $at === '' ? (string) $k : $at.'.'.$k);
+        }
+        if (in_array($at, $paths, true)) {
+            $object = new \stdClass;
+            foreach ($value as $k => $v) {
+                $object->{(string) $k} = $v;
+            }
+
+            return $object;
         }
 
         return $value;
@@ -338,7 +351,7 @@ final class Export
         $n = $this->next[$suite] = ($this->next[$suite] ?? 0) + 1;
         // Run the row as a port will see it: through JSON, the way the loader hands it over.
         $expected = self::call($suite, $fn, json_decode(json_encode($input === [] ? new \stdClass : $input, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR));
-        $row = ['id' => sprintf('%04d-%s', $n, $slug), 'title' => $title, 'since' => self::SINCE];
+        $row = ['id' => sprintf('%04d-%s', $n, $slug), 'title' => $title, 'since' => $this->since ?? self::SINCE];
         if ($tags !== []) {
             $row['tags'] = $tags;
         }
@@ -443,6 +456,25 @@ final class Export
         $resealed[2]['type'] = 'reminder.sent';
         $resealed[2]['hash'] = EventChain::hashOf($resealed[2]['prev_hash'], $resealed[2]);
         $this->add($c, 'verify-rehashed-row', 'rewriting a row and recomputing ITS hash breaks the link to the next row', 'verify', ['rows' => $resealed], tags: ['verify']);
+
+        $this->since = self::SINCE_052;
+        // 0.52.0: an object whose keys are "0", "1", ... is an OBJECT, never a list.
+        // Inputs are authored from JSON text: a PHP array keyed 0..n-1 would be WRITTEN as a list.
+        $this->add($c, 'canonical-index-keys-object', 'an object whose keys are "0", "1" stays an object', 'canonical',
+            ['value' => json_decode('{"1":"b","0":"a"}'), 'objects' => ['']],
+            notes: 'PHP\'s json_decode(assoc: true) turns this into the list ["a","b"]. Canonical JSON is over JSON values, so it must not.', tags: ['canonical', 'index-keys']);
+        $this->add($c, 'canonical-index-keys-list', 'the list with the same values stays a list', 'canonical',
+            ['value' => ['a', 'b']], tags: ['canonical', 'index-keys']);
+        $this->add($c, 'canonical-index-keys-nested', 'index-keyed objects nested in objects and lists stay objects', 'canonical',
+            ['value' => json_decode('{"data":{"0":{"0":1}},"list":[{"0":true}]}'), 'objects' => ['data', 'data.0', 'list.0']], tags: ['canonical', 'index-keys']);
+        $this->add($c, 'hash-index-key-data', 'event data with index-like keys hashes as an object', 'hash',
+            ['prev_hash' => $genesis, 'event' => ['data' => json_decode('{"0":"x","1":"y"}')] + $first, 'objects' => ['data']], tags: ['hash', 'index-keys']);
+        $indexed = EventChain::append(null, ['envelope_id' => '01JD0000000000000000000000', 'at' => '2026-11-18T12:00:00Z', 'type' => 'envelope.created',
+            'actor' => 'user:1', 'source' => 'server', 'ip' => null, 'user_agent' => null, 'data' => json_decode('{"0":"x","1":"y"}')]);
+        $this->add($c, 'verify-index-key-data', 'a chain whose data is an index-keyed object, read raw as a JSON string, verifies', 'verify',
+            ['rows' => [['data' => '{"0":"x","1":"y"}'] + $indexed]],
+            notes: 'The raw-store form: data as the JSON text a database column holds. A reader that decodes it into a list computes another hash.', tags: ['verify', 'index-keys']);
+        $this->since = null;
     }
 
     // -------------------------------------------------------- sign/completion
@@ -599,6 +631,16 @@ final class Export
             ['steps' => array_merge($ceremony, [['op' => 'sign', 'code' => '123456']])], tags: ['scenario', 'accept']);
         $this->add($c, 'sign-before-consent', 'the ceremony order holds: signing before consent is consent_required and burns no code', 'scenario',
             ['steps' => [['op' => 'send'], ['op' => 'request', 'purpose' => 'view'], ['op' => 'verify', 'code' => 'right'], ['op' => 'request', 'purpose' => 'accept'], ['op' => 'sign', 'code' => 'right']]], tags: ['scenario', 'order']);
+
+        $this->since = self::SINCE_052;
+        // 0.52.0: refusals are the kit-wide error envelope (CC-fancy-0031, suites/http/SPEC.md section 1).
+        $this->add($c, 'envelope-422', 'a 422 is validation_failed, with the fancy-sign code as its one item', 'envelope',
+            ['code' => 'otp_invalid', 'message' => 'That code is not valid. Request a new one if it has expired.', 'request_id' => 'req-0001'], tags: ['envelope']);
+        $this->add($c, 'envelope-423', 'otp_locked keeps its code at the top level', 'envelope',
+            ['code' => 'otp_locked', 'message' => 'Too many wrong codes. Request a new code.', 'request_id' => 'req-0002'], tags: ['envelope']);
+        $this->add($c, 'envelope-404', 'link_invalid is a top-level 404 code, with the request id', 'envelope',
+            ['code' => 'link_invalid', 'message' => 'This link is not valid.', 'request_id' => 'req-0003'], tags: ['envelope']);
+        $this->since = null;
     }
 }
 

@@ -67,7 +67,7 @@ final class DatabaseRepository implements Repository
         return [
             'envelope_id' => (string) $r->envelope_id, 'seq' => (int) $r->seq, 'at' => (string) $r->at, 'type' => (string) $r->type,
             'actor' => (string) $r->actor, 'source' => (string) $r->source, 'ip' => $r->ip, 'user_agent' => $r->user_agent,
-            'data' => json_decode((string) $r->data, true, 512, JSON_THROW_ON_ERROR), 'prev_hash' => (string) $r->prev_hash, 'hash' => (string) $r->hash,
+            'data' => json_decode((string) $r->data, false, 512, JSON_THROW_ON_ERROR), 'prev_hash' => (string) $r->prev_hash, 'hash' => (string) $r->hash,
         ];
     }
 

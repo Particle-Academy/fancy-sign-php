@@ -33,7 +33,17 @@ BREAKING and says what a consumer must do.
   package (`composer conformance:export`), replayed by `ConformanceTest` and
   guarded against drift by `DriftTest`. `Signing::codeDigest()` is public so the
   stored-code digest can be pinned for a port. Test dependency:
-  `particle-academy/fancy-conformance` 0.51.0 (first-party).
+  `particle-academy/fancy-conformance` 0.52.0 (first-party).
+- **Refusals are the kit-wide error envelope** (CC-fancy-0031, the shape
+  fancy-http-guard emits): `{error, message, requestId}` plus the `x-request-id`
+  header, and a 422 code as `validation_failed` with the code as its one item.
+  fancy-http-guard's request id is reused when the host runs it. Pinned by
+  `sign/otp` rows 0017-0019 in fancy-conformance 0.52.0.
+- **Canonical JSON keeps an object an object whatever its keys**: `{"0": "a"}`
+  is never hashed as `["a"]`. Event data read back from a store or a verify
+  upload is decoded with objects kept as objects (`EventChain::rowsFromJson()`,
+  the database store), so a chain verifies the same in PHP and in a Node port.
+  Pinned by `sign/chain` rows 0027-0031.
 - Needs `particle-academy/fine-print` 0.8.0 or later (signing fields and
   incremental updates).
 - Test dependency: `laravel/framework`, the framework this package integrates

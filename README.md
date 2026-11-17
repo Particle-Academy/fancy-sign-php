@@ -142,8 +142,13 @@ Public:
   GET  /fancy-sign/public-key
 ```
 
-Errors are `{"error": {"code", "message"}}`, with codes from a closed set
-(`FancySign\SignError::CODES`).
+Errors are the kit-wide error envelope (the same one `fancy-http-guard` emits):
+`{"error", "message", "requestId"}` with the request id also in the
+`x-request-id` header, and codes from a closed set (`FancySign\SignError::CODES`).
+A code whose status is 422 (`invalid_request`, `otp_invalid`,
+`fields_incomplete`, `mark_invalid`) arrives as `"error": "validation_failed"`
+with the code as its one item in `errors`. When the host runs fancy-http-guard,
+its request id is reused.
 
 ## Without Laravel
 

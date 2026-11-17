@@ -32,7 +32,13 @@ function fsHttp(string $method, string $uri, ?array $body = null, ?int $userId =
     $response = app('router')->dispatch($request);
     $raw = (string) $response->getContent();
 
-    return ['status' => $response->getStatusCode(), 'body' => json_decode($raw, true), 'raw' => $raw, 'type' => $response->headers->get('Content-Type')];
+    $body = json_decode($raw, true);
+    // The fancy-sign code of a refusal: a 422 carries it as its one item (ErrorEnvelopeTest pins the shape).
+    $code = is_array($body) && is_string($body['error'] ?? null)
+        ? ($body['error'] === 'validation_failed' ? ($body['errors'][0]['error'] ?? null) : $body['error'])
+        : null;
+
+    return ['status' => $response->getStatusCode(), 'body' => $body, 'code' => $code, 'raw' => $raw, 'type' => $response->headers->get('Content-Type')];
 }
 
 /** POST /verify as multipart: the PDF as an uploaded file, the JSON parts as fields. */
@@ -59,8 +65,8 @@ it('refuses bad input with the closed error shape', function () {
     $r = fsHttp('POST', '/envelopes', ['title' => '', 'document' => fsDocument(), 'signers' => []]);
 
     expect($r['status'])->toBe(422)
-        ->and($r['body'])->toHaveKey('error')
-        ->and($r['body']['error']['code'])->toBe('invalid_request');
+        ->and($r['body'])->toHaveKey('requestId')
+        ->and($r['code'])->toBe('invalid_request');
 });
 
 it('hides another sender\'s envelope as not_found', function () {
@@ -68,9 +74,9 @@ it('hides another sender\'s envelope as not_found', function () {
     $id = fsHttp('POST', '/envelopes', fsHttpEnvelope())['body']['id'];
 
     $r = fsHttp('GET', "/envelopes/{$id}", userId: 2);
-    expect($r['status'])->toBe(404)->and($r['body']['error']['code'])->toBe('not_found');
+    expect($r['status'])->toBe(404)->and($r['code'])->toBe('not_found');
     expect(fsHttp('GET', '/envelopes', userId: 2)['body'])->toBe([]);
-    expect(fsHttp('POST', '/envelopes', fsHttpEnvelope(), userId: null)['body']['error']['code'])->toBe('session_required');
+    expect(fsHttp('POST', '/envelopes', fsHttpEnvelope(), userId: null)['code'])->toBe('session_required');
 });
 
 it('redacts a wrong code to otp_invalid, and needs the session header for the document', function () {
@@ -82,10 +88,10 @@ it('redacts a wrong code to otp_invalid, and needs the session header for the do
     expect(fsHttp('POST', "/s/{$token}/otp", ['purpose' => 'view'])['status'])->toBe(202);
     $code = TestApp::$mailer->code('alice@example.com', 'view');
     $wrong = fsHttp('POST', "/s/{$token}/otp/verify", ['purpose' => 'view', 'code' => $code === '000000' ? '111111' : '000000']);
-    expect($wrong['status'])->toBe(422)->and($wrong['body']['error']['code'])->toBe('otp_invalid');
+    expect($wrong['status'])->toBe(422)->and($wrong['code'])->toBe('otp_invalid');
 
     $r = fsHttp('GET', "/s/{$token}/document");
-    expect($r['status'])->toBe(401)->and($r['body']['error']['code'])->toBe('session_required');
+    expect($r['status'])->toBe(401)->and($r['code'])->toBe('session_required');
 });
 
 it('runs a whole ceremony over HTTP on the database store, and verifies the result', function () {
@@ -107,7 +113,7 @@ it('runs a whole ceremony over HTTP on the database store, and verifies the resu
     $pdf = fsHttp('GET', "/s/{$token}/document", headers: $h);
     expect($pdf['type'])->toBe('application/pdf')->and($pdf['raw'])->toStartWith('%PDF-');
     expect(fsHttp('POST', "/s/{$token}/events", ['type' => 'page.viewed', 'page' => 1, 'ms' => 1800], headers: $h)['status'])->toBe(202);
-    expect(fsHttp('POST', "/s/{$token}/events", ['type' => 'signer.signed'], headers: $h)['body']['error']['code'])->toBe('invalid_request');
+    expect(fsHttp('POST', "/s/{$token}/events", ['type' => 'signer.signed'], headers: $h)['code'])->toBe('invalid_request');
 
     fsHttp('POST', "/s/{$token}/otp", ['purpose' => 'accept'], headers: $h);
     $signed = fsHttp('POST', "/s/{$token}/sign", [
@@ -140,7 +146,7 @@ it('caps the public verify upload', function () {
     TestApp::boot(['fancy-sign.verify_max_bytes' => 100]);
     $r = fsHttp('POST', '/verify', ['pdf' => str_repeat('x', 200), 'completion' => '{}'], userId: null);
 
-    expect($r['status'])->toBe(429)->and($r['body']['error']['code'])->toBe('limit_exceeded');
+    expect($r['status'])->toBe(429)->and($r['code'])->toBe('limit_exceeded');
 });
 
 it('serves the seal public key', function () {

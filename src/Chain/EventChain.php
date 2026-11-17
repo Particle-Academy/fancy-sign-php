@@ -55,6 +55,31 @@ final class EventChain
     }
 
     /**
+     * A list of events from JSON (an exported certificate, a verify upload),
+     * each row an array whose `data` keeps JSON objects as objects, so an
+     * object with keys "0", "1", ... is never read back as a list. Null when
+     * the JSON is not a list of objects.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    public static function rowsFromJson(string $json): ?array
+    {
+        $decoded = json_decode($json, false, 64);
+        if (! is_array($decoded) || ! array_is_list($decoded)) {
+            return null;
+        }
+        $rows = [];
+        foreach ($decoded as $row) {
+            if (! $row instanceof stdClass) {
+                return null;
+            }
+            $rows[] = get_object_vars($row);
+        }
+
+        return $rows;
+    }
+
+    /**
      * The next event after `$last` (null for the first), with seq, prev_hash and hash filled in.
      *
      * @param  array<string, mixed>|null  $last
@@ -102,8 +127,9 @@ final class EventChain
                 return ['ok' => false, 'checked' => $checked, 'head' => $prev, 'seq' => $seq, 'problem' => 'broken_link'];
             }
             $envelope ??= $row['envelope_id'] ?? null;
-            $data = is_string($row['data'] ?? null) ? json_decode($row['data'], true) : ($row['data'] ?? null);
-            $ok = is_array($data) && ($row['envelope_id'] ?? null) === $envelope;
+            // Decoded with objects kept as objects: {"0": "x"} must hash as an object, never as a list.
+            $data = is_string($row['data'] ?? null) ? json_decode($row['data'], false) : ($row['data'] ?? null);
+            $ok = (is_array($data) || $data instanceof stdClass) && ($row['envelope_id'] ?? null) === $envelope;
             try {
                 $ok = $ok && self::hashOf($prev, [
                     'seq' => $seq, 'envelope_id' => (string) $row['envelope_id'], 'at' => (string) ($row['at'] ?? ''),

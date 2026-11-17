@@ -174,11 +174,12 @@ final class Renderer
             $line = '#'.$e['seq'].'  '.$e['at'].'  '.$e['type'].'  by '.$e['actor']
                 .($e['source'] === 'client' ? '  (reported by the signer\'s browser)' : '')
                 .'  IP '.($e['ip'] ?? '-');
+            $data = (array) $e['data'];  // a store may hold it as an object (EventChain keeps JSON objects as objects)
             if ($e['type'] === 'page.viewed') {
-                $line .= '  page '.$e['data']['page'].', '.$e['data']['ms'].' ms';
+                $line .= '  page '.$data['page'].', '.$data['ms'].' ms';
             }
             if ($e['type'] === 'signer.declined') {
-                $line .= '  reason: '.$e['data']['reason'];
+                $line .= '  reason: '.$data['reason'];
             }
             $blocks[] = $small($line);
         }
