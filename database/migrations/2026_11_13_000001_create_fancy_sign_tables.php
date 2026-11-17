@@ -61,6 +61,12 @@ return new class extends Migration
             $t->unsignedInteger('count');
             $t->unsignedBigInteger('ends');
         });
+        Schema::create('fancy_sign_org_settings', function (Blueprint $t): void {
+            $t->string('org_id', 64)->primary();
+            $t->string('per_page', 16);
+            $t->string('updated_by', 191)->nullable();
+            $t->string('updated_at', 32)->nullable();
+        });
         Schema::create('fancy_sign_blobs', function (Blueprint $t): void {
             $t->string('key', 191)->primary();
             $t->longText('bytes');
@@ -69,7 +75,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        foreach (['blobs', 'hits', 'sessions', 'otps', 'links', 'events', 'envelopes'] as $table) {
+        foreach (['blobs', 'org_settings', 'hits', 'sessions', 'otps', 'links', 'events', 'envelopes'] as $table) {
             Schema::dropIfExists("fancy_sign_{$table}");
         }
     }

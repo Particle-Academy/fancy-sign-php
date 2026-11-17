@@ -64,4 +64,10 @@ interface Repository
     public function putBlob(string $key, string $bytes): void;
 
     public function blob(string $key): ?string;
+
+    /** @return array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}|null */
+    public function orgSettings(string $orgId): ?array;
+
+    /** @param array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string} $settings */
+    public function saveOrgSettings(array $settings): void;
 }

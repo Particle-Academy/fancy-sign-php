@@ -31,8 +31,12 @@ No third-party code.
   coordinate is ever stored by hand.
 - **A final signature page**, generated and appended, with a signature and a
   date-signed field per signer. It is part of the document the signer sees.
-- **Per-page initials or signatures** (`settings.per_page`), an admin option.
-  They go on the authored pages only and never on the final page.
+- **Per-page initials or signatures**, an organisation admin's setting
+  (`PUT /fancy-sign/org/settings { per_page }`). When it is on, every envelope
+  of that organisation carries it, and a sender cannot turn it off; drafts take
+  the setting in force when they are sent. An envelope with no organisation
+  uses its own `settings.per_page`. The marks go on the authored pages only and
+  never on the final page.
 - **Email one-time codes, purpose-bound.** A `view` code opens a short signer
   session; a separate, fresh `accept` code is sent with the signature. Six
   digits from a CSPRNG, stored only as an HMAC, never logged or written to an
@@ -105,7 +109,10 @@ Every limit has a secure default and can be overridden under `limits`.
 
 Bind your own `FancySign\Mail\SignMailer` for branded mail, your own
 `FancySign\Laravel\SenderPolicy` for teams (the default lets a sender reach only
-the envelopes they created), and a `FancySign\StepUp\StepUpVerifier` to allow
+the envelopes they created; its `orgId()` names the sender's organisation),
+your own `FancySign\Laravel\OrgAdminPolicy` to say who may change an
+organisation's signing settings (the default names nobody), and a
+`FancySign\StepUp\StepUpVerifier` to allow
 `settings.step_up = passkey` (for example with fancy-passkeys).
 
 ### Routes
@@ -120,6 +127,7 @@ Sender (your auth):
   POST /fancy-sign/envelopes/{id}/remind      GET  /fancy-sign/envelopes/{id}/events
   GET  /fancy-sign/envelopes/{id}/certificate (?format=json)
   GET  /fancy-sign/envelopes/{id}/document
+  GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page }  (org admin)
 
 Signer (link token, then X-Fancy-Sign-Session):
   POST /fancy-sign/s/{token}/otp          { purpose: view|accept }

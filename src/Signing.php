@@ -96,7 +96,7 @@ final class Signing
             'title' => $input['title'] ?? $env['title'],
             'document' => $input['document'] ?? $env['document']['model'],
             'signers' => $input['signers'] ?? array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
-            'settings' => $input['settings'] ?? $env['settings'],
+            'settings' => $input['settings'] ?? $this->storedSettings($env),
         ];
         $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
         $env = $this->validated($merged, $keep);
@@ -111,6 +111,13 @@ final class Signing
         $env = $this->find($id);
         if ($env['status'] !== 'draft') {
             throw new SignError('envelope_not_draft', 'Only a draft envelope can be sent.');
+        }
+        if ($env['org_id'] !== null && $this->orgSettings($env['org_id'])['per_page'] !== $env['settings']['per_page']) {
+            // The org admin changed the per-page setting since the draft was made: send under the one in force now.
+            $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
+            $env = $this->validated(['title' => $env['title'], 'document' => $env['document']['model'],
+                'signers' => array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
+                'settings' => $this->storedSettings($env)], $keep);
         }
         try {
             $out = $this->renderer->asSent($env, (string) $this->config->get('signature_page_title'));
@@ -498,7 +505,7 @@ final class Signing
                 'viewed_at' => null, 'link_opened' => false, 'mark' => null, 'method' => null, 'otp_seq' => null];
         }
 
-        $settings = $this->settings($input['settings'] ?? []);
+        $settings = $this->settings($input['settings'] ?? [], $base['org_id'] ?? null);
         $fields = [];
         foreach (self::fieldNodes($doc['blocks']) as $node) {
             if (! isset($signers[$node['signer']])) {
@@ -529,21 +536,78 @@ final class Signing
         ];
     }
 
+    // ============================================================ organisation
+
+    private const PER_PAGE = ['none', 'initials', 'signature'];
+
+    /**
+     * An organisation's signing settings. Today one: `per_page`, the per-page
+     * initials or signature an org admin turns on for every envelope of the
+     * org. Who is an admin is the host's decision (Laravel: OrgAdminPolicy).
+     *
+     * @return array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}
+     */
+    public function orgSettings(string $orgId): array
+    {
+        return $this->repo->orgSettings($orgId) ?? ['org_id' => $orgId, 'per_page' => 'none', 'updated_by' => null, 'updated_at' => null];
+    }
+
+    /**
+     * Set an organisation's settings. They apply to every new envelope of the
+     * org and to its drafts when they are sent. An envelope already sent keeps
+     * what it was sent with, because that is the document the signer sees.
+     *
+     * @param  array{per_page?: mixed}  $input
+     * @return array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}
+     */
+    public function setOrgSettings(string $orgId, array $input, string $actor): array
+    {
+        if ($orgId === '' || strlen($orgId) > 64) {
+            throw new SignError('invalid_request', 'An organisation id is 1 to 64 characters.');
+        }
+        if (array_diff(array_keys($input), ['per_page']) !== []) {
+            throw new SignError('invalid_request', 'Organisation settings take per_page only.');
+        }
+        $perPage = $input['per_page'] ?? 'none';
+        if (! in_array($perPage, self::PER_PAGE, true)) {
+            throw new SignError('invalid_request', 'per_page is none, initials or signature.');
+        }
+        $row = ['org_id' => $orgId, 'per_page' => $perPage, 'updated_by' => $actor, 'updated_at' => $this->at()];
+        $this->repo->saveOrgSettings($row);
+
+        return $row;
+    }
+
+    /** A stored envelope's settings, as input again; per_page dropped when an org decides it. */
+    private function storedSettings(array $env): array
+    {
+        $s = $env['settings'];
+        if ($env['org_id'] !== null) {
+            unset($s['per_page']);
+        }
+
+        return $s;
+    }
+
     /** @return array<string, mixed> */
-    private function settings(mixed $in): array
+    private function settings(mixed $in, ?string $orgId = null): array
     {
         if (! is_array($in)) {
             throw new SignError('invalid_request', 'settings must be an object.');
         }
+        $orgPerPage = $orgId === null ? 'none' : $this->orgSettings($orgId)['per_page'];
+        if ($orgPerPage !== 'none' && array_key_exists('per_page', $in) && $in['per_page'] !== $orgPerPage) {
+            throw new SignError('invalid_request', "settings.per_page is set by your organisation ({$orgPerPage}).");
+        }
         $s = [
-            'per_page' => $in['per_page'] ?? 'none',
+            'per_page' => $orgPerPage !== 'none' ? $orgPerPage : ($in['per_page'] ?? 'none'),
             'otp' => ['view' => true, 'accept' => true],
             'step_up' => $in['step_up'] ?? 'none',
             'level' => $in['level'] ?? 'ses',
             'seal' => $in['seal'] ?? 'none',
             'expires_at' => $in['expires_at'] ?? null,
         ];
-        if (! in_array($s['per_page'], ['none', 'initials', 'signature'], true)) {
+        if (! in_array($s['per_page'], self::PER_PAGE, true)) {
             throw new SignError('invalid_request', 'settings.per_page is none, initials or signature.');
         }
         if ($s['level'] !== 'ses') {

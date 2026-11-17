@@ -30,6 +30,7 @@ final class FancySignServiceProvider extends ServiceProvider
         $this->app->singletonIf(Repository::class, fn (Application $app) => new DatabaseRepository($app['db']->connection($app['config']->get('fancy-sign.connection'))));
         $this->app->singletonIf(SignMailer::class, fn (Application $app) => new LaravelMailer($app['mailer']));
         $this->app->singletonIf(SenderPolicy::class, CreatorOnlyPolicy::class);
+        $this->app->singletonIf(OrgAdminPolicy::class, NoOrgAdmins::class);
         $this->app->singletonIf(Clock::class, SystemClock::class);
 
         $this->app->singleton(Signing::class, function (Application $app): Signing {

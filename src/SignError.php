@@ -21,6 +21,7 @@ final class SignError extends RuntimeException
     public const CODES = [
         'invalid_request' => 422,
         'not_found' => 404,
+        'forbidden' => 403,
         'link_invalid' => 404,
         'otp_invalid' => 422,
         'otp_locked' => 423,

@@ -42,6 +42,12 @@ published. Find it then with `search-backend-packages` (stack `php`).
 - **Without Laravel:** `new Signing(repo:, mailer:, sealSecretKey:, appKey:, linkUrl:)`,
   then `create(...)` and `send(...)`. Implement `FancySign\Repository\Repository`
   for real storage (`InMemoryRepository` is for tests).
+- **Per-page marks are an organisation setting.** `GET`/`PUT
+  /fancy-sign/org/settings { per_page: none|initials|signature }`; only an admin
+  named by `FancySign\Laravel\OrgAdminPolicy` may change it (the default names
+  nobody, so bind one). When it is on, a sender's envelope that disagrees is
+  refused with `invalid_request`. Framework-free: `orgSettings()` /
+  `setOrgSettings()`.
 - **Extension points:** bind `FancySign\Mail\SignMailer` (branded mail),
   `FancySign\Laravel\SenderPolicy` (teams; the default lets a sender reach only
   their own envelopes), `FancySign\StepUp\StepUpVerifier` (to allow

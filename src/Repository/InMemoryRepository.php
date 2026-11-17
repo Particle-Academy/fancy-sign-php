@@ -28,6 +28,19 @@ final class InMemoryRepository implements Repository
     /** @var array<string, string> */
     private array $blobs = [];
 
+    /** @var array<string, array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}> */
+    private array $orgs = [];
+
+    public function orgSettings(string $orgId): ?array
+    {
+        return $this->orgs[$orgId] ?? null;
+    }
+
+    public function saveOrgSettings(array $settings): void
+    {
+        $this->orgs[$settings['org_id']] = $settings;
+    }
+
     public function saveEnvelope(array $envelope): void
     {
         $this->envelopes[$envelope['id']] = $envelope;

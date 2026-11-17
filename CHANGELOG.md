@@ -20,6 +20,14 @@ BREAKING and says what a consumer must do.
   completion record; a certificate of completion (PDF and JSON); a verifier
   that names each failure. A Laravel bridge with migrations, sender, signer and
   public routes, and mail through the host's mailer.
+- **Per-page initials or signatures are an organisation admin's setting.**
+  `Signing::orgSettings()` / `setOrgSettings()`, `GET`/`PUT
+  {prefix}/org/settings`, a `fancy_sign_org_settings` table, and
+  `Laravel\OrgAdminPolicy` to name the admins (the default, `NoOrgAdmins`,
+  names nobody). When an organisation turns it on, every envelope of that org
+  carries it and a sender cannot override it (`invalid_request`); a draft takes
+  the setting in force when it is sent, and a sent envelope keeps what it was
+  sent with. A new error code, `forbidden` (403).
 - Needs `particle-academy/fine-print` 0.8.0 or later (signing fields and
   incremental updates).
 - Test dependency: `laravel/framework`, the framework this package integrates

@@ -71,6 +71,18 @@ final class DatabaseRepository implements Repository
         ];
     }
 
+    public function orgSettings(string $orgId): ?array
+    {
+        $r = $this->db->table('fancy_sign_org_settings')->where('org_id', $orgId)->first();
+
+        return $r === null ? null : ['org_id' => (string) $r->org_id, 'per_page' => (string) $r->per_page, 'updated_by' => $r->updated_by, 'updated_at' => $r->updated_at];
+    }
+
+    public function saveOrgSettings(array $settings): void
+    {
+        $this->db->table('fancy_sign_org_settings')->updateOrInsert(['org_id' => $settings['org_id']], $settings);
+    }
+
     public function putLink(string $tokenHash, string $envelopeId, string $signerId): void
     {
         $this->db->table('fancy_sign_links')->insert(['token_hash' => $tokenHash, 'envelope_id' => $envelopeId, 'signer_id' => $signerId]);

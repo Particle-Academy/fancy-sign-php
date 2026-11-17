@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use FancySign\Laravel\Http\OrgController;
 use FancySign\Laravel\Http\PublicController;
 use FancySign\Laravel\Http\SenderController;
 use FancySign\Laravel\Http\SignerController;
@@ -26,6 +27,8 @@ Route::prefix($prefix)->name('fancy-sign.')->group(function (): void {
         Route::get('envelopes/{id}/events', [SenderController::class, 'events'])->name('envelopes.events');
         Route::get('envelopes/{id}/certificate', [SenderController::class, 'certificate'])->name('envelopes.certificate');
         Route::get('envelopes/{id}/document', [SenderController::class, 'document'])->name('envelopes.document');
+        Route::get('org/settings', [OrgController::class, 'show'])->name('org.settings.show');
+        Route::put('org/settings', [OrgController::class, 'update'])->name('org.settings.update');
     });
 
     Route::middleware(config('fancy-sign.signer_middleware', []))->prefix('s/{token}')->name('signer.')->group(function (): void {
