@@ -28,6 +28,12 @@ BREAKING and says what a consumer must do.
   carries it and a sender cannot override it (`invalid_request`); a draft takes
   the setting in force when it is sent, and a sent envelope keeps what it was
   sent with. A new error code, `forbidden` (403).
+- **The reference for fancy-conformance's `sign/*` suites** (0.51.0): `sign/chain`,
+  `sign/completion`, `sign/fields` and `sign/otp`, 73 rows exported from this
+  package (`composer conformance:export`), replayed by `ConformanceTest` and
+  guarded against drift by `DriftTest`. `Signing::codeDigest()` is public so the
+  stored-code digest can be pinned for a port. Test dependency:
+  `particle-academy/fancy-conformance` 0.51.0 (first-party).
 - Needs `particle-academy/fine-print` 0.8.0 or later (signing fields and
   incremental updates).
 - Test dependency: `laravel/framework`, the framework this package integrates

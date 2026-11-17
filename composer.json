@@ -33,6 +33,7 @@
     },
     "require-dev": {
         "laravel/framework": "^13.30",
+        "particle-academy/fancy-conformance": "0.51.0",
         "pestphp/pest": "^4.0|^5.0"
     },
     "suggest": {
@@ -49,7 +50,8 @@
         }
     },
     "scripts": {
-        "test": "pest"
+        "test": "pest",
+        "conformance:export": "@php tests/Conformance/Export.php"
     },
     "extra": {
         "laravel": {

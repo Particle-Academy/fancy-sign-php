@@ -759,7 +759,17 @@ final class Signing
 
     private function otpHash(array $env, array $signer, string $purpose, string $code): string
     {
-        return hash_hmac('sha256', "{$env['id']}|{$signer['id']}|{$purpose}|{$code}", $this->appKey);
+        return self::codeDigest($this->appKey, $env['id'], $signer['id'], $purpose, $code);
+    }
+
+    /**
+     * How a one-time code is stored: `HMAC-SHA256(app key, envelope|signer|purpose|code)`,
+     * lowercase hex. Public so the conformance suite `sign/otp` can pin it
+     * for a port; the code itself is never stored.
+     */
+    public static function codeDigest(string $appKey, string $envelopeId, string $signerId, string $purpose, string $code): string
+    {
+        return hash_hmac('sha256', "{$envelopeId}|{$signerId}|{$purpose}|{$code}", $appKey);
     }
 
     /** @return array<string, mixed> a mark, normalised: drawn points become integers on Renderer::GRID */

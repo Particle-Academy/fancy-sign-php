@@ -60,6 +60,24 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
   README, `AGENTS.md`, this file, the changelog and composer.json for forbidden
   phrases.
 
+## Conformance (`sign/*` in fancy-conformance)
+
+This package is the REFERENCE for the four `sign/*` suites a port
+(fancy-sign-js) is held to. `tests/Conformance/Export.php` authors every row and
+computes every golden by running this package; `composer conformance:export`
+writes them into `../fancy-conformance/suites/sign/`. `ConformanceTest` replays
+the installed rows; `DriftTest` re-exports to a temporary directory and fails if
+a byte moved.
+
+- **Append rows, never insert.** Ids are never renumbered.
+- **A red DriftTest is a contract change**, not a test to fix: re-export, review
+  the diff in fancy-conformance, release it, and move the exact pin in
+  `require-dev`.
+- **Nothing platform-dependent reaches a golden:** no PDF bytes (zlib), no
+  rects (floats), no random ids. Placement is pinned as page numbers.
+- Locally the fixture set comes from `../fancy-conformance` through
+  `composer.local.json`.
+
 ## Traps
 
 - **fine-print 0.8.0 is not published yet** (signing fields and `Incremental`
