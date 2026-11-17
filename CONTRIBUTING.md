@@ -80,11 +80,11 @@ a byte moved.
 
 ## Traps
 
-- **fine-print 0.8.0 is not published yet** (signing fields and `Incremental`
-  are on fine-print main). Locally, install with the gitignored
-  `composer.local.json`, which points a path repository at `../fine-print`:
+- **Working against an unreleased fine-print or fancy-conformance**: install
+  with the gitignored `composer.local.json`, which points path repositories at
+  `../fine-print` and `../fancy-conformance`:
   `COMPOSER=composer.local.json composer update`. CI resolves the real
-  constraint and stays red until fine-print 0.8.0 is on Packagist.
+  constraints from Packagist.
 - **The Laravel suite boots a hand-built kernel** (`tests/Support/TestApp.php`),
   no testbench, on in-memory SQLite with the array mailer.
 - **The verify endpoint takes the PDF as a multipart file.** A PDF is binary and

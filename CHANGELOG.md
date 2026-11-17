@@ -8,6 +8,8 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-18
+
 ### Added
 
 - The first release: designed to support simple electronic signatures (SES).

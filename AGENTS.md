@@ -77,7 +77,7 @@ published. Find it then with `search-backend-packages` (stack `php`).
 - **The verify endpoint takes the PDF as a multipart file**, not inside JSON.
 - **IP addresses and user agents are stored** as evidence; they are personal
   data, so the host's privacy notice must list them.
-- **fine-print 0.8.0 is required and not yet on Packagist.**
+- **Needs fine-print 0.8.0 or later** (signing fields and incremental updates); Composer installs it.
 - **Pre-1.0:** breaking changes may land in MINOR releases.
 
 ## Agents
