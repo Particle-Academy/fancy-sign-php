@@ -1,67 +1,85 @@
-# AGENTS.md - fancy-sign (PHP)
+# Using particle-academy/fancy-sign (PHP) — guide for agents
 
-This file describes **this repository's code**: its API, its invariants and its
-traps. Process rules (release lifecycle, publishing, version policy, backports)
-live in the envelope's `RULES.md` and are never copied here.
+How an agent installs and uses this package in a consumer app. What the package
+is, is in [README.md](./README.md). Notes for working ON this repo's code are in
+[CONTRIBUTING.md](./CONTRIBUTING.md).
 
-Design: the envelope's `.ai/plans/fancy-sign.md` (CC-fancy-0036). This repo is
-phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
-`routes/fancy-sign.php`.
+## Install
 
-## Layout
+```bash
+composer require particle-academy/fancy-sign
+php artisan migrate
+```
 
-| where | what |
-|---|---|
-| `src/Signing.php` | the framework-free core: every sender and signer operation |
-| `src/Chain/EventChain.php` | the per-envelope hash chain, the closed event set |
-| `src/Completion/Completion.php` | the `fsig_v1_` record, token and Ed25519 seal |
-| `src/Verify/Verifier.php` | verify(final, completion, events?) with named failures |
-| `src/Pdf/Renderer.php` | as-sent PDF, final PDF (incremental update), certificate |
-| `src/Repository/` | the storage contract and the in-memory store |
-| `src/Laravel/` | provider, database store, mailer, sender policy, controllers |
-| `src/Support/CanonicalJson.php` | change-council's canonical JSON, copied |
+- **Requires:** PHP `^8.4` with ext-sodium. The Laravel bridge is for Laravel
+  13; the framework-free `FancySign\Signing` service needs no framework.
+- Set a seal key (a base64 Ed25519 secret key) as `FANCY_SIGN_SEAL_KEY`:
 
-## Invariants
+  ```bash
+  php -r "echo base64_encode(sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair())), PHP_EOL;"
+  ```
 
-- **Standard library only.** sodium, `hash`, `hash_hmac`, `random_int`,
-  `random_bytes`. A new dependency is an approval request, never a `require`.
-- **Secrets are stored hashed.** Link tokens and session tokens as SHA-256;
-  codes as `HMAC-SHA256(app key, envelope|signer|purpose|code)`. A code goes to
-  the mailer and nowhere else: never an event, a log or a response.
-  `HttpTest` pins that the stored rows never contain the code or the token.
-- **Codes are consumed by pull.** `Repository::pullOtp()` removes the row in the
-  same operation that reads it. A wrong guess puts it back with one more
-  attempt; at the limit it stays, locked. The accept code is checked LAST in
-  `sign()`, so a request refused for another reason does not burn it.
-- **Redaction.** Unknown, expired and wrong codes are all `otp_invalid` on the
-  wire; the reason is in the `otp.failed` event. Only `otp_locked` differs.
-- **Order of the ceremony**: view code, consent, document opened, then sign.
-  `consent_required` and `not_viewed` enforce it.
-- **Canonical JSON refuses floats.** Anything hashed (event data, the
-  completion record, the mark) holds integers or strings. A drawn mark is
-  quantised to integers on `Renderer::GRID` before it is stored or hashed.
-  Placement rects (floats) live on the envelope and never in an event.
-- **`page.viewed` is the only client-sourced event**, and `EventChain::append`
-  refuses any other pairing. Show it labelled as browser-reported.
-- **The as-sent PDF is a byte-for-byte prefix of the final one.** The final
-  PDF is made only by fine-print's `Incremental::overlay`. `as_sent_bytes` is in
-  the sealed record, so the prefix check needs no file of ours.
-- **Field placement comes from fine-print.** Node fields by id; the final-page
-  fields are `final-signature-{signer}` and `final-date-{signer}`; per-page
-  marks fold into one `every-page-{kind}-{signer}` field with many placements.
-- **The sealed record has a closed key set** (`Completion::KEYS`,
-  `SIGNER_KEYS`); `wellFormed()` refuses anything else.
-- **Legal claims.** The plan's section 10 wording only. `ClaimsTest` greps the
-  README, this file, the changelog and composer.json for forbidden phrases.
+- Optional config: `php artisan vendor:publish --tag=fancy-sign-config`.
+- The signer pages are yours: point `signer_url` at a page running
+  `<SignerCeremony>` from `@particle-academy/fancy-sign-ui`.
+
+## Find it on the Fancy MCP server
+
+The catalog server is `https://ui.particle.academy/mcp` (streamable HTTP, no API
+key; MCP id `fancy-ui`). fancy-sign is not yet listed there; it appears once
+published. Find it then with `search-backend-packages` (stack `php`).
+
+## API essentials
+
+- **Laravel routes** (JSON and PDF only, no pages) under the `fancy-sign`
+  prefix: sender routes behind `sender_middleware` (default `['web', 'auth']`),
+  signer routes under `/fancy-sign/s/{token}/...` with an
+  `X-Fancy-Sign-Session` header after the view code, and public
+  `POST /fancy-sign/verify` and `GET /fancy-sign/public-key`. The full list is
+  in the README.
+- **Errors** are `{"error": {"code", "message"}}`, codes from the closed set
+  `FancySign\SignError::CODES`.
+- **Without Laravel:** `new Signing(repo:, mailer:, sealSecretKey:, appKey:, linkUrl:)`,
+  then `create(...)` and `send(...)`. Implement `FancySign\Repository\Repository`
+  for real storage (`InMemoryRepository` is for tests).
+- **Extension points:** bind `FancySign\Mail\SignMailer` (branded mail),
+  `FancySign\Laravel\SenderPolicy` (teams; the default lets a sender reach only
+  their own envelopes), `FancySign\StepUp\StepUpVerifier` (to allow
+  `settings.step_up = passkey`).
+- **Verify:** `verify(final.pdf, completion.json, events?)` names the first
+  failure (`completion_invalid`, `token_mismatch`, `seal_invalid`,
+  `final_hash_mismatch`, `prefix_mismatch`, `chain_broken`,
+  `chain_head_mismatch`).
 
 ## Traps
 
-- **fine-print 0.8.0 is not published yet** (signing fields and `Incremental`
-  are on fine-print main). Locally, install with the gitignored
-  `composer.local.json`, which points a path repository at `../fine-print`:
-  `COMPOSER=composer.local.json composer update`. CI resolves the real
-  constraint and stays red until fine-print 0.8.0 is on Packagist.
-- **The Laravel suite boots a hand-built kernel** (`tests/Support/TestApp.php`),
-  no testbench, on in-memory SQLite with the array mailer.
-- **The verify endpoint takes the PDF as a multipart file.** A PDF is binary and
-  cannot travel inside a JSON body.
+- **Make no legal claim for it beyond the README's wording.** It is designed
+  to support simple electronic signatures (SES); whether that suffices depends
+  on the jurisdiction and the document type. Recommend legal review.
+- **`settings.level` other than `ses` and `settings.seal` other than `none` are
+  refused today.**
+- **The seal is checked by this package's verifier**, with the host's public
+  key. A PDF reader shows no signature panel for it.
+- **`page.viewed` is reported by the signer's browser.** It is a claim, never
+  proof of reading; label it so.
+- **The ceremony order is enforced:** view code, consent, document opened, then
+  sign (`consent_required`, `not_viewed`).
+- **Unknown, expired and wrong codes all answer `otp_invalid`**; only
+  `otp_locked` is distinct.
+- **The verify endpoint takes the PDF as a multipart file**, not inside JSON.
+- **IP addresses and user agents are stored** as evidence; they are personal
+  data, so the host's privacy notice must list them.
+- **fine-print 0.8.0 is required and not yet on Packagist.**
+- **Pre-1.0:** breaking changes may land in MINOR releases.
+
+## Agents
+
+`registerSignBridge` in `@particle-academy/agent-integrations` (subpath
+`/bridges/sign`) lets an agent manage envelopes: `sign_list_envelopes`,
+`sign_get_envelope`, `sign_timeline`, `sign_verify`, field placement
+(`sign_place_field`, `sign_move_field`, `sign_remove_field`),
+`sign_set_signers`, `sign_set_settings`, and **proposals** a human confirms:
+`sign_propose_send`, `sign_propose_void`, `sign_propose_reminder`.
+
+No tool signs, verifies a code, accepts consent, adopts a mark or declines:
+those acts belong to the signer.

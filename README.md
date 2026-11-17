@@ -14,6 +14,13 @@ Standard library only: SHA-256, HMAC, `random_int` and Ed25519 through
 ext-sodium. The PDF engine is [`particle-academy/fine-print`](https://github.com/Particle-Academy/fine-print).
 No third-party code.
 
+<!-- fancy-agents-note:start -->
+> **For agents.** Every Fancy package, this one included, is listed on the
+> Fancy MCP catalog server at `https://ui.particle.academy/mcp` (streamable HTTP, no API key;
+> MCP id `fancy-ui`), with install commands and docs. How an agent installs
+> and uses this package is in [AGENTS.md](https://github.com/Particle-Academy/fancy-sign-php/blob/main/AGENTS.md).
+<!-- fancy-agents-note:end -->
+
 ## What it does
 
 - **Envelopes and signers.** A sender builds an envelope from a fine-print

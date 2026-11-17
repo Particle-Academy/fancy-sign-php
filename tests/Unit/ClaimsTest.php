@@ -12,13 +12,13 @@ const FS_FORBIDDEN = [
     'esign/ueta compliant', 'court-proof', 'court proof', 'qualified electronic signature', 'equivalent to a handwritten',
 ];
 
-it('never makes a forbidden legal claim in the README, the AGENTS file, the changelog or the composer description', function (string $file) {
+it('never makes a forbidden legal claim in the README, the AGENTS and CONTRIBUTING files, the changelog or the composer description', function (string $file) {
     $text = strtolower((string) file_get_contents(dirname(__DIR__, 2).'/'.$file));
     expect($text)->not->toBe('');
     foreach (FS_FORBIDDEN as $phrase) {
         expect(str_contains($text, $phrase))->toBeFalse("{$file} says \"{$phrase}\"");
     }
-})->with(['README.md', 'AGENTS.md', 'CHANGELOG.md', 'composer.json']);
+})->with(['README.md', 'AGENTS.md', 'CONTRIBUTING.md', 'CHANGELOG.md', 'composer.json']);
 
 it('says what it is designed for and recommends legal review', function () {
     $readme = (string) file_get_contents(dirname(__DIR__, 2).'/README.md');
