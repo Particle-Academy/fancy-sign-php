@@ -10,6 +10,10 @@ BREAKING and says what a consumer must do.
 
 ### Changed
 
+- **CI: the lab-certificate gate verifies against the lab's rotated key list.**
+  The lab's first signing key is retired: certificates it already issued still
+  verify, and nothing new it signs ever can. Consumers do nothing.
+
 - **Docs only (`AGENTS.md`):** an event's `data` from `Signing::events()` is an
   object under the database store (read `$event['data']->reason`), and the host
   hook should run on a prompt queue (`FANCY_SIGN_HOOK_QUEUE`) when the default
