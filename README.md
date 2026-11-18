@@ -56,6 +56,11 @@ No third-party code.
   (`document.opened`, observed by the server), per-page viewed (`page.viewed`,
   **reported by the signer's browser** and labelled so everywhere), signed
   (`signer.signed`) and declined (`signer.declined`, with the reason).
+- **Request changes.** Beside Decline, the signer can send the sender a
+  required message (bounded like a decline reason), recorded as
+  `signer.requested_changes` with its text. It does not end the envelope: the
+  signer can still sign or decline, and can ask again up to
+  `limits.max_change_requests` times (5 by default).
 - **The final PDF** is the as-sent PDF plus one incremental update with the
   marks. The as-sent file stays a byte-for-byte prefix: truncate the final file
   at `as_sent_bytes` and hash it to prove the signed content did not change,
@@ -136,6 +141,7 @@ Signer (link token, then X-Fancy-Sign-Session):
   GET  /fancy-sign/s/{token}/document     POST /fancy-sign/s/{token}/events  { type: page.viewed, page, ms }
   POST /fancy-sign/s/{token}/sign         { fields, mark, adoption, code }
   POST /fancy-sign/s/{token}/decline      { reason }
+  POST /fancy-sign/s/{token}/request-changes  { text }   (envelope stays open; 429 limit_exceeded over the cap)
 
 Public:
   POST /fancy-sign/verify                 multipart pdf + completion (+ events)

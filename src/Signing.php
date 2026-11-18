@@ -433,6 +433,38 @@ final class Signing
         return $this->signerView($token, $session);
     }
 
+    /**
+     * Request changes: the signer sends the sender a message (required, bounded
+     * like a decline reason) and the envelope stays OPEN, so they can still sign
+     * or decline. Recorded as `signer.requested_changes` {text}. Allowed after
+     * the view code, as decline is, never after signing or declining, and at
+     * most `max_change_requests` times per signer.
+     *
+     * @return array<string, mixed> SignerView
+     */
+    public function requestChanges(string $token, ?string $session, mixed $text, Context $ctx): array
+    {
+        [$env, $signer] = $this->openLink($token);
+        $this->signerMayAct($signer);
+        $this->session($env, $signer, $session);
+        $text = $this->text($text, (int) $this->config->get('max_decline_reason'));
+        if ($this->changeRequests($env['id'], $signer) >= $this->config->int('max_change_requests')) {
+            throw new SignError('limit_exceeded', 'You have asked for changes as many times as this envelope allows. Sign or decline, or contact the sender.');
+        }
+        $this->event($env['id'], 'signer.requested_changes', $this->actor($signer), $ctx, ['text' => $text]);
+
+        return $this->signerView($token, $session);
+    }
+
+    /** How many times this signer has asked for changes on this envelope. */
+    private function changeRequests(string $envelopeId, array $signer): int
+    {
+        $actor = $this->actor($signer);
+
+        return count(array_filter($this->repo->events($envelopeId),
+            static fn (array $e): bool => $e['type'] === 'signer.requested_changes' && $e['actor'] === $actor));
+    }
+
     // ================================================================ completion
 
     private function complete(array $env): void
@@ -914,6 +946,8 @@ final class Signing
                 'consent_at' => $signer['consent']['at'] ?? null, 'signed_at' => $signer['signed_at'], 'declined_at' => $signer['declined_at']],
             'consent' => ['required' => $signer['consent'] === null, 'text' => $this->config->consentText(), 'version' => $this->config->consentVersion()],
             'adoption_text' => $this->config->adoptionText(),
+            'changes_requested' => $this->changeRequests($env['id'], $signer),
+            'max_change_requests' => $this->config->int('max_change_requests'),
             'fields' => array_values(array_filter($wire['fields'], fn (array $f) => $f['signer_id'] === $signer['id'])),
         ];
     }

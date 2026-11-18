@@ -40,6 +40,7 @@ Route::prefix($prefix)->name('fancy-sign.')->group(function (): void {
         Route::post('events', [SignerController::class, 'events'])->name('events');
         Route::post('sign', [SignerController::class, 'sign'])->name('sign');
         Route::post('decline', [SignerController::class, 'decline'])->name('decline');
+        Route::post('request-changes', [SignerController::class, 'requestChanges'])->name('request-changes');
     });
 
     Route::middleware(config('fancy-sign.public_middleware', []))->group(function (): void {

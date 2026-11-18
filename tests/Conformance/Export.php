@@ -51,6 +51,9 @@ final class Export
     /** The fixture release that added the index-key and error-envelope rows. */
     public const SINCE_052 = '0.52.0';
 
+    /** The fixture release that added request changes (fancy-sign 0.3.0). */
+    public const SINCE_053 = '0.53.0';
+
     /** The `since` new rows get, while a later block is being added. */
     private ?string $since = null;
 
@@ -314,6 +317,7 @@ final class Export
 
                         return ['advanced' => (int) $step['seconds']];
                     })(),
+                    'changes' => ['changes_requested' => $s->requestChanges((string) $token, $session, $step['text'] ?? null, $ctx)['changes_requested']],
                     'sign' => (function () use ($s, $token, $session, $ctx, $code, $step): array {
                         $view = $s->signerView((string) $token, $session);
                         $fields = [];
@@ -333,7 +337,7 @@ final class Export
             $events = [];
             foreach ($id === null ? [] : array_slice($s->events($id), $before) as $e) {
                 $row = ['type' => $e['type'], 'source' => $e['source']];
-                if (str_starts_with($e['type'], 'otp.') || str_starts_with($e['type'], 'link.')) {
+                if (str_starts_with($e['type'], 'otp.') || str_starts_with($e['type'], 'link.') || $e['type'] === 'signer.requested_changes') {
                     $row['data'] = $e['data'] === [] ? new \stdClass : $e['data'];
                 }
                 $events[] = $row;
@@ -474,6 +478,14 @@ final class Export
         $this->add($c, 'verify-index-key-data', 'a chain whose data is an index-keyed object, read raw as a JSON string, verifies', 'verify',
             ['rows' => [['data' => '{"0":"x","1":"y"}'] + $indexed]],
             notes: 'The raw-store form: data as the JSON text a database column holds. A reader that decodes it into a list computes another hash.', tags: ['verify', 'index-keys']);
+        $this->since = null;
+
+        // 0.53.0: signer.requested_changes joins the closed event set (fancy-sign 0.3.0).
+        $this->since = self::SINCE_053;
+        $this->add($c, 'append-requested-changes', 'signer.requested_changes is in the closed set, server-observed, with its text', 'append',
+            ['last' => null, 'event' => ['type' => 'signer.requested_changes', 'actor' => 'signer:alice', 'data' => ['text' => 'Please itemise the delivery.']] + $base], tags: ['append', 'requested-changes']);
+        $this->add($c, 'append-refuses-client-requested-changes', 'a request for changes reported by the client is refused: the server observes it', 'append',
+            ['last' => null, 'event' => ['type' => 'signer.requested_changes', 'actor' => 'signer:alice', 'source' => 'client', 'data' => ['text' => 'x']] + $base], tags: ['append', 'refusal', 'requested-changes']);
         $this->since = null;
     }
 
@@ -640,6 +652,22 @@ final class Export
             ['code' => 'otp_locked', 'message' => 'Too many wrong codes. Request a new code.', 'request_id' => 'req-0002'], tags: ['envelope']);
         $this->add($c, 'envelope-404', 'link_invalid is a top-level 404 code, with the request id', 'envelope',
             ['code' => 'link_invalid', 'message' => 'This link is not valid.', 'request_id' => 'req-0003'], tags: ['envelope']);
+        $this->since = null;
+
+        // 0.53.0: request changes (fancy-sign 0.3.0). It does not end the envelope.
+        $this->since = self::SINCE_053;
+        $this->add($c, 'changes-then-sign', 'a signer asks for changes and can still sign: signer.requested_changes {text}, then the signing events', 'scenario',
+            ['steps' => array_merge($ceremony, [['op' => 'changes', 'text' => '  Please itemise the delivery.  '], ['op' => 'request', 'purpose' => 'accept'], ['op' => 'sign', 'code' => 'right']])],
+            notes: 'The text is trimmed before it is chained.', tags: ['scenario', 'requested-changes']);
+        $this->add($c, 'changes-need-the-view-code', 'asking for changes needs a session, as decline does', 'scenario',
+            ['steps' => [['op' => 'send'], ['op' => 'changes', 'text' => 'Change it.']]], tags: ['scenario', 'requested-changes']);
+        $this->add($c, 'changes-over-the-cap', 'the cap is a setting: max_change_requests 1 refuses the second request with limit_exceeded (429)', 'scenario',
+            ['config' => ['max_change_requests' => 1], 'steps' => [['op' => 'send'], ['op' => 'request', 'purpose' => 'view'], ['op' => 'verify', 'code' => 'right'],
+                ['op' => 'changes', 'text' => 'First.'], ['op' => 'changes', 'text' => 'Second.']]], tags: ['scenario', 'requested-changes', 'limits']);
+        $this->add($c, 'changes-text-required', 'an empty message is invalid_request and records nothing', 'scenario',
+            ['steps' => [['op' => 'send'], ['op' => 'request', 'purpose' => 'view'], ['op' => 'verify', 'code' => 'right'], ['op' => 'changes', 'text' => '   ']]], tags: ['scenario', 'requested-changes']);
+        $this->add($c, 'changes-after-signing', 'after the last signature completes the envelope, asking for changes is envelope_not_open', 'scenario',
+            ['steps' => array_merge($ceremony, [['op' => 'request', 'purpose' => 'accept'], ['op' => 'sign', 'code' => 'right'], ['op' => 'changes', 'text' => 'Too late.']])], tags: ['scenario', 'requested-changes']);
         $this->since = null;
     }
 }

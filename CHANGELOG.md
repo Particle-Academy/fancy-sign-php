@@ -8,6 +8,28 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+
+- **Request changes** (owner-approved q_8c180eab). Beside Decline, the signer
+  sends the sender a required message, bounded like a decline reason
+  (`max_decline_reason`, 1000): `POST {prefix}/s/{token}/request-changes {text}`,
+  `Signing::requestChanges()`. Recorded as a new event in the closed set,
+  `signer.requested_changes` with `data.text`, chained, delivered through the
+  0.2.0 host hook and readable from `events()`.
+  - It does NOT end the envelope: the signer can still sign or decline.
+  - It needs the view code's session, as decline does, and is refused after
+    signing or declining.
+  - A signer may ask up to `max_change_requests` times per envelope (default 5,
+    a setting); the next is `limit_exceeded` (429) in the kit-wide error
+    envelope.
+  - The signer view carries `changes_requested` and `max_change_requests`.
+  - Pinned by fancy-conformance 0.53.0 (`sign/chain` 0032-0033, `sign/otp`
+    0020-0024).
+- **Consumer action:** none required. A host closing deals from the hook should
+  treat `signer.requested_changes` as "still open", not as a decline.
+
 ### Changed
 
 - **CI: the lab-certificate gate verifies against the lab's rotated key list.**

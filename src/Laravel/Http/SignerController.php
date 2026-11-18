@@ -63,6 +63,11 @@ final class SignerController extends Controller
             $request->only(['fields', 'mark', 'adoption', 'code', 'passkey']), $this->ctx($request))));
     }
 
+    public function requestChanges(Request $request, string $token): Response
+    {
+        return $this->run(fn () => new JsonResponse($this->signing->requestChanges($token, $this->session($request), $request->input('text'), $this->ctx($request))));
+    }
+
     public function decline(Request $request, string $token): Response
     {
         return $this->run(fn () => new JsonResponse($this->signing->decline($token, $this->session($request), $request->input('reason'), $this->ctx($request))));

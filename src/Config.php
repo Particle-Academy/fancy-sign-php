@@ -22,7 +22,8 @@ final class Config
         'max_signers' => 50,
         'max_title' => 200,
         'max_name' => 200,
-        'max_decline_reason' => 1000,
+        'max_decline_reason' => 1000,      // also bounds a request-changes message
+        'max_change_requests' => 5,        // per signer and envelope
         'max_document_blocks' => 5000,
         'mark' => [
             'max_strokes' => 64,

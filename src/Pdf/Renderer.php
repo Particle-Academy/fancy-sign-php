@@ -181,6 +181,9 @@ final class Renderer
             if ($e['type'] === 'signer.declined') {
                 $line .= '  reason: '.$data['reason'];
             }
+            if ($e['type'] === 'signer.requested_changes') {
+                $line .= '  asked: '.$data['text'];
+            }
             $blocks[] = $small($line);
         }
         if (is_array($c)) {

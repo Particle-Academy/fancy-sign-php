@@ -16,14 +16,14 @@ use ParticleAcademy\Conformance\Conformance;
  * The fixture set is pinned EXACTLY in require-dev, and the first two tests
  * make the pin a checked claim.
  */
-const FSC_PINNED_SUITE_VERSION = '0.52.0';
+const FSC_PINNED_SUITE_VERSION = '0.53.0';
 
 /** Exact row counts. A row lost between the exporter and the loader fails here. */
 const FSC_ROWS = [
-    'sign/chain' => 31,
+    'sign/chain' => 33,
     'sign/completion' => 20,
     'sign/fields' => 11,
-    'sign/otp' => 19,
+    'sign/otp' => 24,
 ];
 
 it('runs against the pinned fixture set, and says which', function (): void {

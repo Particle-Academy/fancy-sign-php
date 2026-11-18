@@ -96,6 +96,8 @@ Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e):
         // Every signer has signed and the record is sealed: close the deal.
         'envelope.completed' => Deal::where('envelope_id', $e->envelopeId)->first()?->closeWon(),
         'signer.declined', 'envelope.voided' => Deal::where('envelope_id', $e->envelopeId)->first()?->closeLost($e->eventType),
+        // The signer asked for changes and the envelope is STILL OPEN: revise and resend, or wait.
+        'signer.requested_changes' => Deal::where('envelope_id', $e->envelopeId)->first()?->flagChangesRequested($e->at),
         default => null,
     };
 });
@@ -115,6 +117,16 @@ Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e):
   `$event['data']->purpose`, not `$event['data']['reason']`; `(array)
   $event['data']` if you want an array. The in-memory store hands back the
   arrays it was given.
+- **Request changes (0.3.0).** `POST /fancy-sign/s/{token}/request-changes
+  {text}` (framework-free: `Signing::requestChanges($token, $session, $text,
+  $ctx)`) records `signer.requested_changes` with `data.text`
+  (`$event['data']->text`). It needs the view code's session, as decline does,
+  and is refused once the signer has signed or declined. It does NOT end the
+  envelope, so do not treat it as a decline: the signer can still sign. Each
+  signer may ask `limits.max_change_requests` times (default 5); the next is
+  `limit_exceeded` (429). To act on it, revise the quote and send a new
+  envelope, or void this one; the request text is signer-written, so show it as
+  plain text.
 - **Use a prompt queue.** Delivery jobs go to your default queue unless
   `config('fancy-sign.hook.queue')` (`FANCY_SIGN_HOOK_QUEUE`) names one. If your
   default queue is slow or busy, set it to a queue a worker drains promptly,

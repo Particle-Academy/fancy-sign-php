@@ -29,7 +29,7 @@ final class EventChain
     public const TYPES = [
         'envelope.created', 'envelope.sent', 'email.sent', 'link.opened', 'otp.sent', 'otp.verified', 'otp.failed',
         'otp.locked', 'consent.accepted', 'document.opened', 'page.viewed', 'field.completed', 'mark.adopted',
-        'signer.signed', 'signer.declined', 'reminder.sent', 'envelope.completed', 'envelope.voided', 'envelope.expired',
+        'signer.signed', 'signer.declined', 'signer.requested_changes', 'reminder.sent', 'envelope.completed', 'envelope.voided', 'envelope.expired',
         'document.downloaded', 'seal.applied',
     ];
 
