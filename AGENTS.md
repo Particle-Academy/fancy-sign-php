@@ -107,6 +107,18 @@ Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e):
   you need them.
 - The event carries no `data`: never a code, a token or a signer's typed text.
   Read the envelope or its events through the package for details.
+- **Reading an event's details:** `Signing::events($id)` returns each event
+  as an array, and under the Laravel bridge's database store its `data` is an
+  **object** (stdClass), on purpose: JSON objects are kept as objects so a
+  chain verifies the same everywhere (`{"0": ..}` must never turn into a
+  list). Read `$event['data']->reason` (a decline reason) or
+  `$event['data']->purpose`, not `$event['data']['reason']`; `(array)
+  $event['data']` if you want an array. The in-memory store hands back the
+  arrays it was given.
+- **Use a prompt queue.** Delivery jobs go to your default queue unless
+  `config('fancy-sign.hook.queue')` (`FANCY_SIGN_HOOK_QUEUE`) names one. If your
+  default queue is slow or busy, set it to a queue a worker drains promptly,
+  so closing the deal does not wait behind other jobs.
 - **Without Laravel**, pass `listener:` to `new Signing(...)`. It is called right
   after each event is stored, synchronously, and anything it throws is
   swallowed so the request stands; queue the work yourself if it can fail.

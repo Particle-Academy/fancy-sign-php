@@ -8,6 +8,13 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs only (`AGENTS.md`):** an event's `data` from `Signing::events()` is an
+  object under the database store (read `$event['data']->reason`), and the host
+  hook should run on a prompt queue (`FANCY_SIGN_HOOK_QUEUE`) when the default
+  one is slow. No code changed; nothing to do.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added
