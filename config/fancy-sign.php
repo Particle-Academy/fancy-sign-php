@@ -41,6 +41,17 @@ return [
     // Largest upload the public verify endpoint reads, PDF and record together.
     'verify_max_bytes' => 20 * 1024 * 1024,
 
+    // The host hook: every event committed to an envelope's chain is delivered
+    // as the Laravel event FancySign\Events\EnvelopeEventRecorded and to a bound
+    // FancySign\Listener\SignListener, by a queued job dispatched after the
+    // commit. `connection` and `queue` choose where (null: the defaults);
+    // `tries` is how often a failing delivery is attempted.
+    'hook' => [
+        'connection' => env('FANCY_SIGN_HOOK_CONNECTION'),
+        'queue' => env('FANCY_SIGN_HOOK_QUEUE'),
+        'tries' => 5,
+    ],
+
     // Overrides for FancySign\Config::DEFAULTS (otp, session_ttl_seconds,
     // mark, page_views, consent, adoption_text, ...).
     'limits' => [],

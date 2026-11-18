@@ -51,6 +51,8 @@ final class TestApp
             'logging' => ['default' => 'null', 'channels' => ['null' => ['driver' => 'monolog', 'handler' => \Monolog\Handler\NullHandler::class]]],
             'auth' => ['defaults' => ['guard' => 'web'], 'guards' => [], 'providers' => []],
             'services' => ['anthropic' => ['key' => ''], 'openai' => ['key' => '']],
+            // The host hook's delivery job runs inline, as on a host with the sync driver.
+            'queue' => ['default' => 'sync', 'connections' => ['sync' => ['driver' => 'sync']], 'failed' => ['driver' => 'null']],
             'fancy-sign' => [
                 'sender_middleware' => [],
                 'seal' => ['secret_key' => $keys['secret'], 'previous_public_keys' => []],
@@ -62,6 +64,8 @@ final class TestApp
         }
         $app->instance('config', $repository);
 
+        $app->singleton(\Illuminate\Contracts\Debug\ExceptionHandler::class, \Illuminate\Foundation\Exceptions\Handler::class);
+
         self::$clock = new FrozenClock();
         $app->instance(Clock::class, self::$clock);
         if ($fakeMailer) {
@@ -71,6 +75,7 @@ final class TestApp
 
         foreach ([EventServiceProvider::class, FilesystemServiceProvider::class, DatabaseServiceProvider::class, ViewServiceProvider::class,
             MailServiceProvider::class, AuthServiceProvider::class, RoutingServiceProvider::class,
+            \Illuminate\Bus\BusServiceProvider::class, \Illuminate\Queue\QueueServiceProvider::class,
             \FancySign\Laravel\FancySignServiceProvider::class] as $provider) {
             $app->register($provider);
         }

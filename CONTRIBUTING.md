@@ -54,6 +54,13 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
 - **Field placement comes from fine-print.** Node fields by id; the final-page
   fields are `final-signature-{signer}` and `final-date-{signer}`; per-page
   marks fold into one `every-page-{kind}-{signer}` field with many placements.
+- **Every chain event goes through `Signing::event()`**, which tells the host
+  hook (`tell()`) after the store returns. Never append to a chain any other
+  way, or the host silently misses an event. The hook can never fail the
+  request: `tell()` swallows, and the Laravel bridge's `QueuedSignListener`
+  catches and reports; each guard has a test that throws through it
+  (`SignListenerTest`, `HostHookTest`). The event carries no `data`, so nothing
+  secret leaves the chain through it.
 - **The sealed record has a closed key set** (`Completion::KEYS`,
   `SIGNER_KEYS`); `wellFormed()` refuses anything else.
 - **Legal claims.** The plan's section 10 wording only. `ClaimsTest` greps the

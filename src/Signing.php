@@ -6,6 +6,8 @@ namespace FancySign;
 
 use FancySign\Chain\EventChain;
 use FancySign\Completion\Completion;
+use FancySign\Events\EnvelopeEventRecorded;
+use FancySign\Listener\SignListener;
 use FancySign\Mail\SignMailer;
 use FancySign\Pdf\Renderer;
 use FancySign\Repository\Repository;
@@ -49,6 +51,7 @@ final class Signing
         private readonly Config $config = new Config(),
         private readonly Clock $clock = new SystemClock(),
         private readonly ?StepUpVerifier $stepUp = null,
+        private readonly ?SignListener $listener = null,
     ) {
         if (strlen($appKey) < 16) {
             throw new \InvalidArgumentException('fancy-sign needs an application key of at least 16 bytes to hash one-time codes.');
@@ -861,10 +864,32 @@ final class Signing
     {
         $at = $this->at();
 
-        return $this->repo->appendEvent($envelopeId, fn (?array $last) => EventChain::append($last, [
+        $event = $this->repo->appendEvent($envelopeId, fn (?array $last) => EventChain::append($last, [
             'envelope_id' => $envelopeId, 'at' => $at, 'type' => $type, 'actor' => $actor, 'source' => $source,
             'ip' => $ctx->ip, 'user_agent' => $ctx->userAgent, 'data' => $data,
         ]));
+        $this->tell($event);
+
+        return $event;
+    }
+
+    /**
+     * The host hook, once the event is stored. A listener's failure is the
+     * host's to handle: it never fails or rolls back this request.
+     *
+     * @param  array<string, mixed>  $event
+     */
+    private function tell(array $event): void
+    {
+        if ($this->listener === null) {
+            return;
+        }
+        try {
+            $this->listener->recorded(EnvelopeEventRecorded::fromChainEvent($event));
+        } catch (\Throwable) {
+            // Deliberately swallowed: the event is chained; the hook is best-effort
+            // here and at-least-once under the Laravel bridge's queued delivery.
+        }
     }
 
     private function actor(array $signer): string

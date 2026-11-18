@@ -167,6 +167,16 @@ $env = $signing->create(['title' => 'Quote', 'document' => $doc, 'signers' => [[
 $signing->send($env['id'], 'user:1');
 ```
 
+## Reacting to signatures
+
+Every event committed to an envelope's chain reaches the host as
+`FancySign\Events\EnvelopeEventRecorded` (envelope id, event type, seq, time):
+a Laravel event, and a call to a `FancySign\Listener\SignListener` if you bind
+one. Under Laravel it is delivered by a queued job after the database commit,
+retried on failure, at least once (dedupe on the seq), and a failing listener
+never fails the signer's request. Close a deal on `envelope.completed`;
+`AGENTS.md` has the example.
+
 ## Agents
 
 The `registerSignBridge` in `@particle-academy/agent-integrations` lets an agent

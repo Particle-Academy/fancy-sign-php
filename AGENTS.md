@@ -53,11 +53,63 @@ published. Find it then with `search-backend-packages` (stack `php`).
 - **Extension points:** bind `FancySign\Mail\SignMailer` (branded mail),
   `FancySign\Laravel\SenderPolicy` (teams; the default lets a sender reach only
   their own envelopes), `FancySign\StepUp\StepUpVerifier` (to allow
-  `settings.step_up = passkey`).
+  `settings.step_up = passkey`), `FancySign\Listener\SignListener` (the host
+  hook, below).
 - **Verify:** `verify(final.pdf, completion.json, events?)` names the first
   failure (`completion_invalid`, `token_mismatch`, `seal_invalid`,
   `final_hash_mismatch`, `prefix_mismatch`, `chain_broken`,
   `chain_head_mismatch`).
+
+## React to what happens: the host hook (0.2.0)
+
+Every event committed to an envelope's chain (the closed set:
+`envelope.sent`, `document.opened`, `page.viewed`, `signer.signed`,
+`signer.declined`, `envelope.completed`, `seal.applied`, `envelope.voided`, and
+the rest) reaches the host as `FancySign\Events\EnvelopeEventRecorded`
+`{envelopeId, eventType, seq, at, actor, source}`. Two ways to take it:
+
+- **A Laravel listener** on `EnvelopeEventRecorded`, or
+- **a `FancySign\Listener\SignListener`** you bind in the container.
+
+Both run inside a queued job (`FancySign\Laravel\DeliverEnvelopeEvent`)
+dispatched **after the database commit**, retried on failure (5 tries by
+default, `config('fancy-sign.hook')`). Delivery is **at least once**: dedupe on
+`$event->dedupeKey()` (envelope id and seq). Your listener throwing never fails
+or rolls back the signer's request; on an async queue it is retried, on the
+`sync` driver it is reported through your exception handler.
+
+Closing a deal when the quote is signed:
+
+```php
+use FancySign\Events\EnvelopeEventRecorded;
+use Illuminate\Support\Facades\Event;
+
+Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e): void {
+    // Once per event, possibly more than once: make it idempotent on the seq.
+    if (! ProcessedSignEvent::firstOrCreate(['key' => $e->dedupeKey()])->wasRecentlyCreated) {
+        return;
+    }
+
+    match ($e->eventType) {
+        // One signer of several has signed: note it on the deal.
+        'signer.signed' => Deal::where('envelope_id', $e->envelopeId)->first()?->noteSigned($e->actor, $e->at),
+        // Every signer has signed and the record is sealed: close the deal.
+        'envelope.completed' => Deal::where('envelope_id', $e->envelopeId)->first()?->closeWon(),
+        'signer.declined', 'envelope.voided' => Deal::where('envelope_id', $e->envelopeId)->first()?->closeLost($e->eventType),
+        default => null,
+    };
+});
+```
+
+- **`envelope.completed` is the one to close on.** It means every signer
+  signed; `signer.signed` arrives once per signer. Download the sealed PDF and
+  the certificate from the package (`finalDocument()`, `certificate()`) when
+  you need them.
+- The event carries no `data`: never a code, a token or a signer's typed text.
+  Read the envelope or its events through the package for details.
+- **Without Laravel**, pass `listener:` to `new Signing(...)`. It is called right
+  after each event is stored, synchronously, and anything it throws is
+  swallowed so the request stands; queue the work yourself if it can fail.
 
 ## Traps
 

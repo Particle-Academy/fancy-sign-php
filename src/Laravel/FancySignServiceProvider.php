@@ -12,6 +12,8 @@ use FancySign\Signing;
 use FancySign\StepUp\StepUpVerifier;
 use FancySign\Support\Clock;
 use FancySign\Support\SystemClock;
+use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
@@ -54,6 +56,10 @@ final class FancySignServiceProvider extends ServiceProvider
                 config: new Config((array) $config->get('fancy-sign.limits', [])),
                 clock: $app->make(Clock::class),
                 stepUp: $app->bound(StepUpVerifier::class) ? $app->make(StepUpVerifier::class) : null,
+                // The host hook: queued delivery after the commit. The host's own
+                // SignListener (if bound) and Laravel listeners run inside that job.
+                listener: new QueuedSignListener($app->make(BusDispatcher::class), $app->make(ExceptionHandler::class), $app['events'], $app,
+                    (array) $config->get('fancy-sign.hook', [])),
             );
         });
 

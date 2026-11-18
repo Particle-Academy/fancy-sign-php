@@ -123,3 +123,46 @@ function fsExpectError(callable $fn, string $code): void
     }
     throw new RuntimeException("expected SignError {$code}, nothing was thrown");
 }
+
+// ---- the Laravel bridge over HTTP, shared by every Feature test (moved from HttpTest)
+
+/** @return array{status: int, body: mixed, raw: string, type: ?string} */
+function fsHttp(string $method, string $uri, ?array $body = null, ?int $userId = 1, array $headers = []): array
+{
+    $server = ['CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json', 'REMOTE_ADDR' => '203.0.113.9', 'HTTP_USER_AGENT' => 'TestAgent/1'];
+    foreach ($headers as $k => $v) {
+        $server['HTTP_'.strtoupper(str_replace('-', '_', $k))] = $v;
+    }
+    $request = \Illuminate\Http\Request::create('/fancy-sign'.$uri, $method, [], [], [], $server, $body === null ? '' : json_encode($body, JSON_THROW_ON_ERROR));
+    app()->instance('request', $request);
+    $request->setUserResolver(fn () => $userId === null ? null : new \Illuminate\Auth\GenericUser(['id' => $userId]));
+    $response = app('router')->dispatch($request);
+    $raw = (string) $response->getContent();
+
+    $body = json_decode($raw, true);
+    // The fancy-sign code of a refusal: a 422 carries it as its one item (ErrorEnvelopeTest pins the shape).
+    $code = is_array($body) && is_string($body['error'] ?? null)
+        ? ($body['error'] === 'validation_failed' ? ($body['errors'][0]['error'] ?? null) : $body['error'])
+        : null;
+
+    return ['status' => $response->getStatusCode(), 'body' => $body, 'code' => $code, 'raw' => $raw, 'type' => $response->headers->get('Content-Type')];
+}
+
+/** POST /verify as multipart: the PDF as an uploaded file, the JSON parts as fields. */
+function fsVerifyUpload(string $pdf, array $fields): array
+{
+    $path = tempnam(sys_get_temp_dir(), 'fsv');
+    file_put_contents($path, $pdf);
+    $file = new Illuminate\Http\UploadedFile($path, 'final.pdf', 'application/pdf', null, true);
+    $request = \Illuminate\Http\Request::create('/fancy-sign/verify', 'POST', $fields, [], ['pdf' => $file], ['HTTP_ACCEPT' => 'application/json', 'REMOTE_ADDR' => '203.0.113.9']);
+    app()->instance('request', $request);
+    $response = app('router')->dispatch($request);
+    @unlink($path);
+
+    return ['status' => $response->getStatusCode(), 'body' => json_decode((string) $response->getContent(), true)];
+}
+
+function fsHttpEnvelope(): array
+{
+    return ['title' => 'Quote Q-1001', 'document' => fsDocument(), 'signers' => [['id' => 'alice', 'name' => 'Alice Example', 'email' => 'alice@example.com']]];
+}

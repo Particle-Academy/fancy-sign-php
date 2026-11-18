@@ -8,6 +8,33 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
+### Added
+
+- **The host hook** (owner-approved, q_c2b20c9e). Every event committed to an
+  envelope's chain, every type in the closed set (`document.opened`,
+  `signer.signed`, `signer.declined`, `envelope.completed`, `envelope.voided`
+  and the rest), reaches the host as `FancySign\Events\EnvelopeEventRecorded`
+  `{envelopeId, eventType, seq, at, actor, source}`, with `dedupeKey()`
+  (envelope id and seq) for at-least-once delivery.
+  - **Laravel:** dispatched as a Laravel event and passed to a bound
+    `FancySign\Listener\SignListener`, both inside the queued job
+    `FancySign\Laravel\DeliverEnvelopeEvent`, dispatched after the database
+    commit (a rolled-back transaction delivers nothing) and retried (5 tries by
+    default; `config('fancy-sign.hook')` sets connection, queue and tries).
+  - **A listener's failure never fails or rolls back the request** that
+    recorded the event: an async queue retries it; on the `sync` driver it is
+    reported through the host's exception handler. Tested by a listener that
+    throws during a whole signing ceremony, which still completes and chains.
+  - **Without Laravel:** `new Signing(..., listener: $yourListener)`, called
+    synchronously after each event is stored; what it throws is swallowed.
+  - `AGENTS.md` shows closing a deal on `envelope.completed`.
+- **Consumer action:** none. No job is queued until you listen for
+  `EnvelopeEventRecorded` or bind a `SignListener`. Once you do, the delivery
+  jobs run on your default queue (a queue worker must be running); with the
+  `sync` driver they run inline.
+
 ## [0.1.0] - 2026-11-18
 
 ### Added
