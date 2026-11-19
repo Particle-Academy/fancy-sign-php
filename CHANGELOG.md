@@ -8,6 +8,8 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-19
+
 ### Fixed
 
 - **Host hooks for `envelope.completed` / `seal.applied` now fire after the
