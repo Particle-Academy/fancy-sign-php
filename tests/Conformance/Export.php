@@ -58,6 +58,9 @@ final class Export
     /** The fixture release that adds data mode (CC-fancy-0052, fancy-sign 0.7.0). */
     public const SINCE_057 = '0.57.0';
 
+    /** The fixture release that adds attachFinal (document.finalized and its two error codes). */
+    public const SINCE_058 = '0.58.0';
+
     /** The `since` new rows get, while a later block is being added. */
     private ?string $since = null;
 
@@ -511,6 +514,16 @@ final class Export
             tags: ['append', 'data-mode']);
         $this->add($c, 'append-refuses-client-signature-sealed', 'a client signature.sealed is refused', 'append',
             ['last' => null, 'event' => ['type' => 'signature.sealed', 'actor' => 'signer:alice', 'source' => 'client', 'data' => ['signer_id' => 'alice']] + $base], tags: ['append', 'refusal', 'data-mode']);
+        $this->since = null;
+
+        // 0.58.0: attachFinal. The host registers its final PDF's hash, once, server-observed.
+        $this->since = self::SINCE_058;
+        $finalized = ['final_sha256' => str_repeat('f', 64), 'final_bytes' => 48213];
+        $this->add($c, 'append-document-finalized', 'document.finalized records the host\'s final PDF hash and length, server-observed', 'append',
+            ['last' => null, 'event' => ['type' => 'document.finalized', 'actor' => 'user:1', 'data' => $finalized] + $base],
+            notes: 'Data mode, after completion: attachFinal. The package never reads or stores the PDF.', tags: ['append', 'data-mode']);
+        $this->add($c, 'append-refuses-client-document-finalized', 'a client document.finalized is refused', 'append',
+            ['last' => null, 'event' => ['type' => 'document.finalized', 'actor' => 'user:1', 'source' => 'client', 'data' => $finalized] + $base], tags: ['append', 'refusal', 'data-mode']);
         $this->since = null;
     }
 

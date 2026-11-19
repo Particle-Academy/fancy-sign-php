@@ -90,6 +90,16 @@ final class SenderController extends Controller
         });
     }
 
+    /** Data mode, optional: register the host's final PDF hash, once, after completion. The PDF itself is never sent. */
+    public function attachFinal(Request $request, string $id): Response
+    {
+        return $this->run(function () use ($request, $id) {
+            $this->mine($request, $id);
+
+            return new JsonResponse($this->signing->attachFinal($id, $request->input('sha256'), $request->input('bytes'), $this->actor($request)));
+        });
+    }
+
     public function remind(Request $request, string $id): Response
     {
         return $this->run(function () use ($request, $id) {

@@ -44,6 +44,9 @@ final class SignError extends RuntimeException
         'data_hash_mismatch' => 422,
         // Data mode, profile last-word: an image the signed hash would not cover.
         'data_external_reference' => 422,
+        // Data mode, attachFinal: only a completed envelope takes a final; and only once.
+        'envelope_not_completed' => 409,
+        'final_already_attached' => 409,
     ];
 
     public readonly int $status;

@@ -149,6 +149,9 @@ Sender (your auth):
   POST /fancy-sign/envelopes/{id}/remind      GET  /fancy-sign/envelopes/{id}/events
   GET  /fancy-sign/envelopes/{id}/certificate (?format=json)
   GET  /fancy-sign/envelopes/{id}/document
+  POST /fancy-sign/envelopes/{id}/signers/{signerId}/invite                  (data mode)
+  GET  /fancy-sign/envelopes/{id}/signatures                                 (data mode)
+  POST /fancy-sign/envelopes/{id}/final       { sha256, bytes }              (data mode, after completion)
   GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page, final_page, order }  (org admin)
 
 Signer (link token, then X-Fancy-Sign-Session):
@@ -256,6 +259,10 @@ $signing->invite($env['id'], 'buyer', 'user:1'); // when YOUR workflow says so
 - What the signer's browser says it showed (`document.rendered`, the host's
   template and release) is recorded as a claim, and copied into each record as
   one.
+- Optionally, once everyone has signed, the host registers the hash of the
+  final PDF it made: `attachFinal($id, $sha256, $bytes, $actor)`, once and
+  idempotent, sealed as a `fsig_fin_v1_` record and named by the certificate.
+  The package never receives the PDF.
 - Changing the data means voiding and sending a new envelope. The signing page
   itself stays live: a new host template or fancy-sign-ui release reaches every
   open envelope with no resend.

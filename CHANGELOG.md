@@ -89,11 +89,45 @@ BREAKING and says what a consumer must do.
   release, whose preview PDF hashes, chains, placements and as-sent, final and
   certificate texts matched this code exactly.
 
+- **`Signing::attachFinal($id, $sha256, $bytes, $actor)`** (data mode,
+  optional, owner Q3): once every signer has signed, the host registers the
+  SHA-256 and length of the final PDF it made from the data. The package never
+  receives or stores the PDF. Route `POST envelopes/{id}/final` `{sha256,
+  bytes}` (sender).
+  - Records the new server event `document.finalized {final_sha256,
+    final_bytes}`, then issues the sealed `fancy-sign.final` record v1 (token
+    `fsig_fin_v1_`, `FancySign\Data\FinalRecord`): `envelope_id,
+    completion_token, final_sha256, final_bytes, attached_at, attached_by,
+    chain_head` (the `document.finalized` hash). Stored on the envelope as
+    `final` (a new wire key, null until attached and in pdf mode).
+  - **Once, and idempotent:** the same hash and length again return the stored
+    record with no new event; a different one is the new code
+    **`final_already_attached` (409)**. Decided from the chain inside the
+    append, under the store's lock, so concurrent calls cannot both attach.
+  - Before completion: the new code **`envelope_not_completed` (409)**. In pdf
+    mode `invalid_request` (pdf mode has its own final PDF).
+  - It proves the host registered that hash for that completed signing, once;
+    not that the PDF presents the data faithfully.
+- **`Verifier::verifyData()` takes an optional final PDF and final record**
+  (`$finalPdf`, `$final`), with the reasons `final_invalid` (missing,
+  malformed, bad token or seal, or with events not the `document.finalized` of
+  that hash), `final_not_of_completion` and `final_hash_mismatch`; `checks`
+  gains `final`. `POST verify` (version 2) takes optional `final_pdf` and
+  `final` parts.
+- **The data-mode certificate PDF** (owner Q4): `certificate($id, 'pdf')`
+  describes the signing, never the document: the data hash, each signature
+  record's token, each signer's `renderer` claim labelled as browser-reported,
+  the completion and the registered final. `format=json` gains `final`.
+- **For a port:** the closed event set gains `document.finalized` (server
+  only); the error codes gain `envelope_not_completed` and
+  `final_already_attached`. Exported as `sign/chain` 0038-0039 and the
+  `sign/otp` error-code row, `since` 0.58.0 of fancy-conformance; until that
+  fixture release is pinned here, DriftTest and the `sign/chain` and
+  `sign/otp` ConformanceTest rows fail (all 294 tests pass against that
+  export).
+
 ### Not in this release
 
-- `attachFinal()` (register the host's final PDF hash) and the data-mode
-  certificate PDF: a later release. `certificate($id, 'pdf')` refuses a data
-  envelope; `format=json` works.
 - The fancy-sign-ui data-mode ceremony: fancy-sign-ui's own release.
 
 ## [0.6.0] - 2026-11-19

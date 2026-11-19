@@ -8,6 +8,7 @@ use FancySign\Chain\EventChain;
 use FancySign\Completion\Completion;
 use FancySign\Data\CanonicalDocument;
 use FancySign\Data\DataCompletion;
+use FancySign\Data\FinalRecord;
 use FancySign\Data\SignatureRecord;
 use FancySign\Seal\Ed25519;
 
@@ -100,13 +101,21 @@ final class Verifier
      *   signature_not_in_chain  a record's chain_head is not a signer.signed of its signer, or a
      *                           signature token (a record's, or one the completion lists) was never sealed on the chain
      *
+     * Then, only when a final record or a final PDF is given (attachFinal):
+     *
+     *   final_invalid           the final record is missing (a PDF with no record), malformed, its token or
+     *                           seal fails, or (with events) its chain_head is not the document.finalized
+     *                           that registered this hash
+     *   final_not_of_completion it is genuine but names another envelope or completion
+     *   final_hash_mismatch     the PDF does not hash to final_sha256 / final_bytes
+     *
      * @param  list<array<string, mixed>>|null  $events
      * @param  list<mixed>|null  $signatures
-     * @return array{ok: bool, reason: ?string, checks: array{token: ?bool, seal: ?bool, data_hash: ?bool, signatures: ?bool, chain: ?bool}}
+     * @return array{ok: bool, reason: ?string, checks: array{token: ?bool, seal: ?bool, data_hash: ?bool, signatures: ?bool, chain: ?bool, final: ?bool}}
      */
-    public function verifyData(string $dataJson, mixed $completion, ?array $events = null, ?array $signatures = null): array
+    public function verifyData(string $dataJson, mixed $completion, ?array $events = null, ?array $signatures = null, ?string $finalPdf = null, mixed $final = null): array
     {
-        $checks = ['token' => null, 'seal' => null, 'data_hash' => null, 'signatures' => null, 'chain' => null];
+        $checks = ['token' => null, 'seal' => null, 'data_hash' => null, 'signatures' => null, 'chain' => null, 'final' => null];
         $fail = function (string $reason, ?string $check) use (&$checks): array {
             if ($check !== null) {
                 $checks[$check] = false;
@@ -167,7 +176,39 @@ final class Verifier
             $checks['chain'] = true;
         }
 
+        if ($final !== null || $finalPdf !== null) {
+            if (! FinalRecord::wellFormed($final) || ! hash_equals(FinalRecord::tokenFor($final), $final['token'])
+                || ! $this->sealed(FinalRecord::canonical($final), $final)) {
+                return $fail('final_invalid', 'final');
+            }
+            if ($final['envelope_id'] !== $completion['envelope_id'] || $final['completion_token'] !== $completion['token']) {
+                return $fail('final_not_of_completion', 'final');
+            }
+            if ($events !== null && ! self::finalizedInChain($events, $final)) {
+                return $fail('final_invalid', 'final');
+            }
+            if ($finalPdf !== null && (! hash_equals($final['final_sha256'], hash('sha256', $finalPdf)) || strlen($finalPdf) !== $final['final_bytes'])) {
+                return $fail('final_hash_mismatch', 'final');
+            }
+            $checks['final'] = true;
+        }
+
         return ['ok' => true, 'reason' => null, 'checks' => $checks];
+    }
+
+    /** Is the final record's chain_head the document.finalized that registered exactly its hash and length? */
+    private static function finalizedInChain(array $events, array $final): bool
+    {
+        foreach ($events as $e) {
+            if (($e['hash'] ?? null) === $final['chain_head']) {
+                $d = self::dataOf($e);
+
+                return ($e['type'] ?? null) === 'document.finalized'
+                    && ($d['final_sha256'] ?? null) === $final['final_sha256'] && ($d['final_bytes'] ?? null) === $final['final_bytes'];
+            }
+        }
+
+        return false;
     }
 
     /**

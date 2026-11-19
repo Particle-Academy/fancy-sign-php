@@ -33,6 +33,8 @@ final class EventChain
         'document.downloaded', 'seal.applied',
         // CC-fancy-0052, data mode: the browser's rendering claim, and each signature record's token.
         'document.rendered', 'signature.sealed',
+        // attachFinal: the host registered its final PDF's hash, once, after completion.
+        'document.finalized',
     ];
 
     /**

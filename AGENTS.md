@@ -141,10 +141,20 @@ signer was shown.
   `signatures($id)` (`GET envelopes/{id}/signatures`): each sealed record and
   the adopted mark, for your own final document. `envelope.completed` means
   everyone has signed; what happens next is yours.
+- **Optional: register your final PDF's hash** once everyone has signed:
+  `attachFinal($id, $sha256, $bytes, $actor)` (`POST envelopes/{id}/final`
+  `{sha256, bytes}`). Send the hash, never the PDF; the package stores no
+  document. Once and idempotent: the same hash and length return the stored
+  `fancy-sign.final` record (`fsig_fin_v1_`, on `envelope.final`); a different
+  one is `final_already_attached` (409); before completion it is
+  `envelope_not_completed` (409). It proves you registered that hash for that
+  signing, not that the PDF shows the data faithfully.
 - **Verify:** `Verifier::verifySignature($dataJson, $record, $events?)` for one
   signature, `Verifier::verifyData($dataJson, $completion, $events?,
-  $signatures?)` for the envelope. `$dataJson` may be any export of the same
-  data. `POST verify` takes a version-2 `completion` with `data`.
+  $signatures?, $finalPdf?, $final?)` for the envelope. `$dataJson` may be any
+  export of the same data. A final adds `final_invalid`,
+  `final_not_of_completion` and `final_hash_mismatch`. `POST verify` takes a
+  version-2 `completion` with `data`, and optionally `final_pdf` and `final`.
 - **What the host should do:** keep every template release it has served and
   name it in `renderer`; keep a template's meaning stable across releases
   (layout may change, terms may not); render deterministically for a given data
@@ -152,8 +162,11 @@ signer was shown.
   you make; inline anything that carries meaning, because a URL is hashed as a
   URL. The package does not check `renderer` against your releases; that is
   yours to keep.
-- **No PDF exists in data mode:** `preview()`, `previewDocument()` and the
-  certificate PDF refuse (the certificate's JSON works).
+- **The package makes no document in data mode:** `preview()` and
+  `previewDocument()` refuse. The certificate (`certificate($id, 'pdf'|'json')`)
+  is made only when asked and describes the signing: the data hash, each
+  signature record, each signer's rendering claim labelled as browser-reported,
+  and a registered final.
 
 ## React to what happens: the host hook (0.2.0)
 

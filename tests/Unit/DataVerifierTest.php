@@ -44,7 +44,7 @@ it('verifies a non-canonical export of the same data: the verifier canonicalises
 
     expect(fdvVerifier($c['h'])->verifyData($pretty, $c['completion'], $c['events'], $c['records'])['ok'])->toBeTrue()
         ->and(fdvVerifier($c['h'])->verifyData(fdmQuote(), $c['completion'])['checks'])
-        ->toBe(['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => null, 'chain' => null]);
+        ->toBe(['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => null, 'chain' => null, 'final' => null]);
 });
 
 it('names each verifyData failure, in order', function () {
@@ -94,7 +94,7 @@ it('reports each check as true, false, or null when not reached', function () {
     $r = fdvVerifier($c['h'])->verifyData('{"quote": "Q-1001"}', $c['completion'], $c['events'], $c['records']);
 
     expect($r)->toBe(['ok' => false, 'reason' => 'data_hash_mismatch',
-        'checks' => ['token' => true, 'seal' => true, 'data_hash' => false, 'signatures' => null, 'chain' => null]]);
+        'checks' => ['token' => true, 'seal' => true, 'data_hash' => false, 'signatures' => null, 'chain' => null, 'final' => null]]);
 });
 
 it('verifies one signature with no completion, and names each verifySignature failure', function () {

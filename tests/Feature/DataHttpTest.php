@@ -107,10 +107,50 @@ it('runs a data-mode signing over HTTP: send mails no one, invite, data, renderi
     $verify = fdhVerify(['completion' => json_encode($env['completion']), 'data' => fdmQuote(), 'events' => $events,
         'signatures' => json_encode(array_column($sigs['body'], 'record'))]);
     expect($verify['status'])->toBe(200)->and($verify['body']['ok'])->toBeTrue()
-        ->and($verify['body']['checks'])->toBe(['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => true, 'chain' => true]);
+        ->and($verify['body']['checks'])->toBe(['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => true, 'chain' => true, 'final' => null]);
     $bad = fdhVerify(['completion' => json_encode($env['completion']), 'data' => '{"quote": "Q-1001"}']);
     expect($bad['body']['reason'])->toBe('data_hash_mismatch');
     expect(fdhVerify(['completion' => json_encode($env['completion'])])['code'])->toBe('invalid_request');
+});
+
+it('registers the host\'s final PDF hash over HTTP once, sender-only, and verifies it', function () {
+    TestApp::boot();
+    $id = fdhPostRaw('POST', '/envelopes', fdhBody(fdmQuote()))['body']['id'];
+    fsHttp('POST', "/envelopes/{$id}/send");
+    $pdf = "%PDF-1.7\n% the host's final quote\n%%EOF\n";
+    $body = ['sha256' => hash('sha256', $pdf), 'bytes' => strlen($pdf)];
+    expect(fsHttp('POST', "/envelopes/{$id}/final", $body)['code'])->toBe('envelope_not_completed');
+
+    fsHttp('POST', "/envelopes/{$id}/signers/alice/invite");
+    $token = TestApp::$mailer->token('alice@example.com');
+    fsHttp('POST', "/s/{$token}/otp", ['purpose' => 'view']);
+    $session = fsHttp('POST', "/s/{$token}/otp/verify", ['purpose' => 'view', 'code' => TestApp::$mailer->code('alice@example.com', 'view')])['body']['session'];
+    $hdr = ['X-Fancy-Sign-Session' => $session];
+    fsHttp('POST', "/s/{$token}/consent", ['version' => '1'], headers: $hdr);
+    fdhGet("/s/{$token}/document", $hdr);
+    fsHttp('POST', "/s/{$token}/otp", ['purpose' => 'accept'], headers: $hdr);
+    fsHttp('POST', "/s/{$token}/sign", ['fields' => ['alice-sig' => true], 'mark' => ['kind' => 'typed', 'text' => 'Alice Example'],
+        'adoption' => FancySign\Config::DEFAULTS['adoption_text'], 'code' => TestApp::$mailer->code('alice@example.com', 'accept'), 'data_sha256' => FDM_QUOTE_SHA], headers: $hdr);
+
+    expect(fsHttp('POST', "/envelopes/{$id}/final", $body, userId: 2)['code'])->toBe('not_found')
+        ->and(fsHttp('POST', "/envelopes/{$id}/final", ['sha256' => 'nope', 'bytes' => 3])['code'])->toBe('invalid_request')
+        ->and(fsHttp('POST', "/envelopes/{$id}/final", ['sha256' => hash('sha256', 'x')])['code'])->toBe('invalid_request');
+    $first = fsHttp('POST', "/envelopes/{$id}/final", $body);
+    expect($first['status'])->toBe(200)->and($first['body']['token'])->toStartWith('fsig_fin_v1_');
+    $again = fsHttp('POST', "/envelopes/{$id}/final", $body);
+    expect($again['status'])->toBe(200)->and($again['body'])->toBe($first['body']);
+    $other = fsHttp('POST', "/envelopes/{$id}/final", ['sha256' => hash('sha256', 'other'), 'bytes' => 5]);
+    expect($other['status'])->toBe(409)->and($other['code'])->toBe('final_already_attached');
+
+    $env = fsHttp('GET', "/envelopes/{$id}")['body'];
+    expect($env['final'])->toBe($first['body']);
+    $events = fsHttp('GET', "/envelopes/{$id}/events")['raw'];
+    $verify = fdhVerify(['completion' => json_encode($env['completion']), 'data' => fdmQuote(), 'events' => $events,
+        'final_pdf' => $pdf, 'final' => json_encode($env['final'])]);
+    expect($verify['status'])->toBe(200)->and($verify['body']['ok'])->toBeTrue()->and($verify['body']['checks']['final'])->toBeTrue();
+    $bad = fdhVerify(['completion' => json_encode($env['completion']), 'data' => fdmQuote(), 'final_pdf' => $pdf.'x', 'final' => json_encode($env['final'])]);
+    expect($bad['body']['reason'])->toBe('final_hash_mismatch');
+    expect(fdhVerify(['completion' => json_encode($env['completion']), 'data' => fdmQuote(), 'final' => '[1'])['code'])->toBe('invalid_request');
 });
 
 /** GET returning raw bytes and headers. */

@@ -64,13 +64,17 @@ final class PublicController extends Controller
         $data = $this->part($request, 'data');
         $sigRaw = $this->part($request, 'signatures');
         $signatures = $sigRaw === null ? null : json_decode($sigRaw, true, 64);
-        if ($data === null || ($eventsRaw !== null && ! is_array($events)) || ($sigRaw !== null && (! is_array($signatures) || ! array_is_list($signatures)))) {
-            throw new SignError('invalid_request', 'Send data (JSON text) and completion, and events and signatures as JSON lists when present.');
+        $finalPdf = $this->part($request, 'final_pdf');
+        $finalRaw = $this->part($request, 'final');
+        $final = $finalRaw === null ? null : json_decode($finalRaw, true, 64);
+        if ($data === null || ($eventsRaw !== null && ! is_array($events)) || ($sigRaw !== null && (! is_array($signatures) || ! array_is_list($signatures)))
+            || ($finalRaw !== null && ! is_array($final))) {
+            throw new SignError('invalid_request', 'Send data (JSON text) and completion, events and signatures as JSON lists and final as a JSON object when present.');
         }
         $key = $this->signing->publicKey();
         $verifier = new Verifier([$key['key_id'] => $key['public_key']] + $this->previousKeys);
 
-        return new JsonResponse($verifier->verifyData($data, $record, $events === null ? null : array_values($events), $signatures));
+        return new JsonResponse($verifier->verifyData($data, $record, $events === null ? null : array_values($events), $signatures, $finalPdf, $final));
     }
 
     private int $read = 0;

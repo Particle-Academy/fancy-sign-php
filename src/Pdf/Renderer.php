@@ -472,4 +472,92 @@ final class Renderer
 
         return Agent::toBytes(['title' => 'Certificate of completion', 'blocks' => $blocks]);
     }
+
+    /**
+     * The certificate of a DATA-mode envelope (CC-fancy-0052 section 5.2). It
+     * describes the signing, never the document: the data hash, each signer's
+     * sealed signature record and rendering claim (labelled as reported by
+     * the browser), the events, the completion and an attached final. Made
+     * only when asked; nothing in the signing path depends on it.
+     *
+     * @param  array<string, mixed>  $envelope  wire shape
+     * @param  list<array<string, mixed>>  $events
+     */
+    public function dataCertificate(array $envelope, array $events): string
+    {
+        $p = fn (string $text, array $run = []) => ['type' => 'paragraph', 'runs' => [['text' => $text] + $run]];
+        $small = fn (string $text) => $p($text, ['size' => 8]);
+        $doc = $envelope['document'];
+        $c = $envelope['completion'];
+        $final = $envelope['final'] ?? null;
+        $blocks = [
+            ['type' => 'heading', 'level' => 1, 'runs' => [['text' => 'Certificate of completion']]],
+            $p($envelope['title'], ['bold' => true]),
+            $small('Envelope: '.$envelope['id'].'    Status: '.$envelope['status'].'    Mode: data'),
+            $small('Signed data SHA-256 ('.$doc['canonical'].', '.$doc['data_bytes'].' bytes):'),
+            $small($doc['data_sha256']),
+            $small('Fields SHA-256: '.$doc['fields_sha256'].($doc['profile'] !== null ? '    Profile: '.$doc['profile'] : '')),
+            $small('In data mode the package seals the data and the signing evidence; how the data was displayed to each signer, and any document made from it, are the host application\'s.'),
+        ];
+        $blocks[] = ['type' => 'heading', 'level' => 2, 'runs' => [['text' => 'Signers']]];
+        foreach ($envelope['signers'] as $s) {
+            $blocks[] = $p($s['name'].' <'.$s['email'].'>', ['bold' => true]);
+            $blocks[] = $small('Status: '.$s['status']
+                .($s['consent'] !== null ? '    Consent: '.$s['consent']['at'].' (version '.$s['consent']['version'].')' : '')
+                .($s['signed_at'] !== null ? '    Signed: '.$s['signed_at'] : '')
+                .($s['declined_at'] !== null ? '    Declined: '.$s['declined_at'] : ''));
+            $record = $s['signature'] ?? null;
+            if (is_array($record)) {
+                $blocks[] = $small('Signature record ('.$record['method'].'):');
+                $blocks[] = $small($record['token']);
+                $blocks[] = $small('Rendering, reported by the signer\'s browser: '
+                    .($record['renderer'] !== null ? $record['renderer'] : 'none reported'));
+            }
+            foreach ($events as $e) {
+                if ($e['actor'] === 'signer:'.$s['id'] && in_array($e['type'], ['otp.verified', 'signer.signed'], true)) {
+                    $blocks[] = $small('  '.$e['type'].' at '.$e['at'].'  IP '.($e['ip'] ?? '-').'  '.($e['user_agent'] ?? ''));
+                }
+            }
+        }
+        $blocks[] = ['type' => 'heading', 'level' => 2, 'runs' => [['text' => 'Events']]];
+        foreach ($events as $e) {
+            $line = '#'.$e['seq'].'  '.$e['at'].'  '.$e['type'].'  by '.$e['actor']
+                .($e['source'] === 'client' ? '  (reported by the signer\'s browser)' : '')
+                .'  IP '.($e['ip'] ?? '-');
+            $data = (array) $e['data'];
+            if ($e['type'] === 'page.viewed') {
+                $line .= '  page '.$data['page'].', '.$data['ms'].' ms';
+            }
+            if ($e['type'] === 'document.rendered') {
+                $line .= '  '.$data['pages'].' page(s)';
+            }
+            if ($e['type'] === 'signer.declined') {
+                $line .= '  reason: '.$data['reason'];
+            }
+            if ($e['type'] === 'signer.requested_changes') {
+                $line .= '  asked: '.$data['text'];
+            }
+            $blocks[] = $small($line);
+        }
+        if (is_array($c)) {
+            $blocks[] = ['type' => 'heading', 'level' => 2, 'runs' => [['text' => 'Seal']]];
+            $blocks[] = $small('Chain head: '.$c['chain_head']);
+            $blocks[] = $small('Completion token:');
+            $blocks[] = $small($c['token']);
+            $blocks[] = $small('Seal (Ed25519, key '.$c['key_id'].'): '.$c['seal']);
+        }
+        $blocks[] = ['type' => 'heading', 'level' => 2, 'runs' => [['text' => 'Final document']]];
+        if (is_array($final)) {
+            $blocks[] = $small('Registered by '.$final['attached_by'].' at '.$final['attached_at'].' ('.$final['final_bytes'].' bytes). SHA-256:');
+            $blocks[] = $small($final['final_sha256']);
+            $blocks[] = $small('Final record:');
+            $blocks[] = $small($final['token']);
+            $blocks[] = $small('The host registered this hash for this completed signing. It does not show that the document presents the data faithfully.');
+        } else {
+            $blocks[] = $small('No final document has been registered for this envelope.');
+        }
+        $blocks[] = $small('This certificate records a simple electronic signature process. Have it reviewed by a lawyer before relying on it.');
+
+        return Agent::toBytes(['title' => 'Certificate of completion', 'blocks' => $blocks]);
+    }
 }

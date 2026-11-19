@@ -9,6 +9,8 @@ use FancySign\Completion\Completion;
 use FancySign\Data\CanonicalDocument;
 use FancySign\Data\DataCompletion;
 use FancySign\Data\DataTree;
+use FancySign\Data\FinalExists;
+use FancySign\Data\FinalRecord;
 use FancySign\Data\SignatureRecord;
 use FancySign\Events\EnvelopeEventRecorded;
 use FancySign\Listener\SignListener;
@@ -541,7 +543,74 @@ final class Signing
     }
 
     /**
-     * The certificate of completion: a PDF, or the same data as JSON.
+     * Data mode, optional: register the hash of the final PDF the HOST made
+     * from the data, after completion. The package never reads or stores the
+     * PDF. Records `document.finalized {final_sha256, final_bytes}` and issues
+     * the sealed `fancy-sign.final` record (token `fsig_fin_v1_`), stored on
+     * `envelope.final` and named by the certificate.
+     *
+     * Once, and idempotent: the same hash and length again return the stored
+     * record with no new event; anything else is `final_already_attached`.
+     * That decision is read from the CHAIN inside the append, under the store's
+     * lock, so two concurrent calls cannot both attach.
+     *
+     * @return array<string, mixed> the final record
+     */
+    public function attachFinal(string $id, mixed $sha256, mixed $bytes, string $actor): array
+    {
+        $env = $this->find($id);
+        if (! self::isData($env)) {
+            throw new SignError('invalid_request', 'attachFinal is for data-mode envelopes; a pdf envelope has its own final PDF.');
+        }
+        if (! is_string($sha256) || preg_match('/^[0-9a-f]{64}$/', $sha256) !== 1) {
+            throw new SignError('invalid_request', 'sha256 must be the final PDF\'s SHA-256, 64 lowercase hex characters.');
+        }
+        if (! is_int($bytes) || $bytes < 1) {
+            throw new SignError('invalid_request', 'bytes must be the final PDF\'s length, a whole number of at least 1.');
+        }
+        if ($env['status'] !== 'completed') {
+            throw new SignError('envelope_not_completed', 'A final document can be registered only once every signer has signed.');
+        }
+
+        $guard = function () use ($id, $sha256, $bytes): void {
+            foreach ($this->repo->events($id) as $e) {
+                if ($e['type'] !== 'document.finalized') {
+                    continue;
+                }
+                $d = (array) $e['data'];
+                if (($d['final_sha256'] ?? null) === $sha256 && ($d['final_bytes'] ?? null) === $bytes) {
+                    throw new FinalExists();
+                }
+
+                throw new SignError('final_already_attached', 'A different final document is already registered for this envelope.');
+            }
+        };
+        $record = null;
+        try {
+            $this->event($id, 'document.finalized', $actor, Context::none(), ['final_sha256' => $sha256, 'final_bytes' => $bytes],
+                guard: $guard, after: function (array $event) use ($id, $sha256, $bytes, $actor, &$record): void {
+                    // Inside the append, so the record is stored with the event that registers it.
+                    $env = $this->find($id);
+                    $env['final'] = FinalRecord::issue([
+                        'envelope_id' => $id, 'completion_token' => $env['completion']['token'], 'final_sha256' => $sha256, 'final_bytes' => $bytes,
+                        'attached_at' => $event['at'], 'attached_by' => $actor, 'chain_head' => $event['hash'], 'key_id' => Ed25519::keyId($this->sealPublic),
+                    ], $this->sealSecretKey);
+                    $record = $env['final'];
+                    $this->repo->saveEnvelope($env);
+                });
+        } catch (FinalExists) {
+            // The event and the record are written in one append, so a registered final has its record.
+            return $this->find($id)['final'] ?? throw new SignError('final_already_attached', 'The final document is being registered; try again.');
+        }
+
+        return $record;
+    }
+
+    /**
+     * The certificate of completion: a PDF, or the same data as JSON. In data
+     * mode the PDF describes the signing (the data hash, each signature
+     * record, each signer's rendering claim, an attached final), never the
+     * document.
      *
      * @return string|array<string, mixed>
      */
@@ -552,10 +621,10 @@ final class Signing
         $events = $this->repo->events($id);
         $reference = $this->reference($stored);
         if ($format === 'json') {
-            return ['envelope' => $env, 'completion' => $env['completion'], 'events' => $events, 'reference' => $reference];
+            return ['envelope' => $env, 'completion' => $env['completion'], 'events' => $events, 'reference' => $reference, 'final' => $env['final']];
         }
         if (self::isData($stored)) {
-            throw new SignError('invalid_request', 'The certificate of a data-mode envelope is available as JSON (format=json); its PDF comes in a later release.');
+            return $this->renderer->dataCertificate($env, $events);
         }
 
         return $this->renderer->certificate($env, $events, $reference);
@@ -1637,15 +1706,35 @@ final class Signing
         $this->repo->saveEnvelope($env);
     }
 
-    /** @return array<string, mixed> the stored event */
-    private function event(string $envelopeId, string $type, string $actor, Context $ctx, array $data, string $source = 'server'): array
+    /**
+     * Append one event. `$guard` and `$after` run INSIDE the append, under the
+     * store's lock: `$guard` before the event is built (it may throw to refuse,
+     * having read the chain), `$after` with the built event before it is
+     * stored (a write that must land with it, or not at all).
+     *
+     * @param  (callable(): void)|null  $guard
+     * @param  (callable(array<string, mixed>): void)|null  $after
+     * @return array<string, mixed> the stored event
+     */
+    private function event(string $envelopeId, string $type, string $actor, Context $ctx, array $data, string $source = 'server',
+        ?callable $guard = null, ?callable $after = null): array
     {
         $at = $this->at();
 
-        $event = $this->repo->appendEvent($envelopeId, fn (?array $last) => EventChain::append($last, [
-            'envelope_id' => $envelopeId, 'at' => $at, 'type' => $type, 'actor' => $actor, 'source' => $source,
-            'ip' => $ctx->ip, 'user_agent' => $ctx->userAgent, 'data' => $data,
-        ]));
+        $event = $this->repo->appendEvent($envelopeId, function (?array $last) use ($envelopeId, $at, $type, $actor, $source, $ctx, $data, $guard, $after): array {
+            if ($guard !== null) {
+                $guard();
+            }
+            $event = EventChain::append($last, [
+                'envelope_id' => $envelopeId, 'at' => $at, 'type' => $type, 'actor' => $actor, 'source' => $source,
+                'ip' => $ctx->ip, 'user_agent' => $ctx->userAgent, 'data' => $data,
+            ]);
+            if ($after !== null) {
+                $after($event);
+            }
+
+            return $event;
+        });
         $this->tell($event);
 
         return $event;
@@ -1729,7 +1818,7 @@ final class Signing
                 'as_sent_sha256' => $env['document']['as_sent_sha256'], 'final_sha256' => $env['document']['final_sha256'], 'pages' => $env['document']['pages']],
             'settings' => $env['settings'], 'signers' => $signers, 'fields' => $fields,
             'chain_head' => $events === [] ? EventChain::GENESIS : $events[count($events) - 1]['hash'],
-            'completion' => $env['completion'],
+            'completion' => $env['completion'], 'final' => $env['final'] ?? null,
             'created_at' => $env['created_at'], 'sent_at' => $env['sent_at'], 'completed_at' => $env['completed_at'],
             'created_by' => $env['created_by'] ?? null,
         ];

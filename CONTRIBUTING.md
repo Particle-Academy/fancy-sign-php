@@ -27,6 +27,7 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
 | `src/Support/CanonicalJson.php` | change-council's canonical JSON, copied |
 | `src/Data/CanonicalDocument.php` | `fsig-data-1`, data mode's canonical form (floats printed as ECMAScript does) |
 | `src/Data/SignatureRecord.php`, `DataCompletion.php` | data mode's `fsig_sig_v1_` per-signature record and `fsig_v2_` completion |
+| `src/Data/FinalRecord.php` | data mode's `fsig_fin_v1_` record of the host's final PDF hash (`attachFinal`) |
 | `src/Data/DataTree.php` | the only reads INTO host data: pointer resolution, the `last-word` image check |
 
 ## Invariants
@@ -57,6 +58,12 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
   group to `pending` WITHOUT mail; nothing follows completion. A change that
   makes the package decide when someone is invited, or what happens after a
   signature, is outside the CC.
+- **`attachFinal` decides "already attached" from the CHAIN, inside the
+  append.** `Signing::event()`'s `guard` reads the chain for a
+  `document.finalized` under the store's lock, and its `after` stores the
+  final record with the event, so two concurrent calls cannot both attach and
+  the event never lands without its record. `AttachFinalTest` proves it with a
+  store whose envelope reads are stale; a check on `envelope.final` fails it.
 - **Data mode never reaches `buildAsSent()`.** No as-sent or final blob, no
   PDF; `preview()`/`previewDocument()` go through `pdfPreviewEnvelope()`, which
   refuses a data envelope. `DataModeTest` asserts the only blob is `data/{id}`.

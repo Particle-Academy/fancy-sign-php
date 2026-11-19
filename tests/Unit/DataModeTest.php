@@ -162,7 +162,7 @@ it('completes with a version-2 record binding every signature, which verifies wi
 
     $verify = (new Verifier([$h['keys']['key_id'] => $h['keys']['public']]))->verifyData(fdmQuote(), $c, $events, $records);
     expect($verify)->toBe(['ok' => true, 'reason' => null,
-        'checks' => ['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => true, 'chain' => true]]);
+        'checks' => ['token' => true, 'seal' => true, 'data_hash' => true, 'signatures' => true, 'chain' => true, 'final' => null]]);
 });
 
 it('answers previewData with the facts create() would store, side-effect free', function () {
@@ -194,13 +194,14 @@ it('lets a draft change its data, which must come with its new hash', function (
         ->toMatchArray(['mode' => 'data', 'order' => 'sequential']);
 });
 
-it('reports a sent data envelope\'s certificate as JSON with the data reference, and refuses the PDF for now', function () {
+it('reports a sent data envelope\'s certificate as JSON with the data reference, and draws its PDF', function () {
     $h = fsHarness();
     $id = fdmSent($h)['id'];
     fdmSignAs($h, $id, 'alice');
     $cert = $h['signing']->certificate($id, 'json');
 
     expect($cert['reference'])->toBe(['envelope' => "Envelope {$id}", 'data_sha256' => FDM_QUOTE_SHA, 'canonical' => 'fsig-data-1'])
-        ->and($cert['completion']['version'])->toBe(2);
-    fsExpectError(fn () => $h['signing']->certificate($id, 'pdf'), 'invalid_request');
+        ->and($cert['completion']['version'])->toBe(2)
+        ->and($cert['final'])->toBeNull()
+        ->and($h['signing']->certificate($id, 'pdf'))->toStartWith('%PDF-');
 });

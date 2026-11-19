@@ -46,3 +46,8 @@ it('admits signature.sealed from the server only', function () {
     expect(EventChain::append(null, fsChainEvent('signature.sealed', 'server'))['type'])->toBe('signature.sealed')
         ->and(fn () => EventChain::append(null, fsChainEvent('signature.sealed', 'client')))->toThrow(InvalidArgumentException::class);
 });
+
+it('admits document.finalized from the server only (attachFinal)', function () {
+    expect(EventChain::append(null, fsChainEvent('document.finalized', 'server'))['type'])->toBe('document.finalized')
+        ->and(fn () => EventChain::append(null, fsChainEvent('document.finalized', 'client')))->toThrow(InvalidArgumentException::class);
+});

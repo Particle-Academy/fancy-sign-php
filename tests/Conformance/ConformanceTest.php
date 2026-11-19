@@ -20,7 +20,7 @@ const FSC_PINNED_SUITE_VERSION = '0.56.0';
 
 /** Exact row counts. A row lost between the exporter and the loader fails here. */
 const FSC_ROWS = [
-    'sign/chain' => 37,
+    'sign/chain' => 39,
     'sign/completion' => 20,
     'sign/data' => 13,
     'sign/fields' => 11,

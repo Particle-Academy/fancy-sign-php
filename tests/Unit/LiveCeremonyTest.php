@@ -30,7 +30,7 @@ it('stores and serves no presentation on a data-mode envelope', function () {
     $id = fdmSent($h)['id'];
     $env = $h['signing']->envelope($id);
 
-    expect(array_keys($env))->toBe(['id', 'org_id', 'title', 'status', 'document', 'settings', 'signers', 'fields', 'chain_head', 'completion',
+    expect(array_keys($env))->toBe(['id', 'org_id', 'title', 'status', 'document', 'settings', 'signers', 'fields', 'chain_head', 'completion', 'final',
         'created_at', 'sent_at', 'completed_at', 'created_by'])
         ->and(array_keys($env['document']))->toBe(['mode', 'profile', 'canonical', 'data_sha256', 'data_bytes', 'fields_sha256', 'as_sent_sha256', 'final_sha256', 'pages'])
         ->and(array_keys($env['settings']))->toBe(['per_page', 'order', 'otp', 'step_up', 'level', 'seal', 'expires_at', 'mode'])
