@@ -108,7 +108,12 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
   event, so a planted or replayed link reveals nothing.
 - **Every chain event goes through `Signing::event()`**, which tells the host
   hook (`tell()`) after the store returns. Never append to a chain any other
-  way, or the host silently misses an event. The hook can never fail the
+  way, or the host silently misses an event. Inside `holdingEvents()` (all of
+  `sign()`, and so every completion) the telling is HELD until the operation's
+  writes are saved, so a listener on `envelope.completed` or `seal.applied`
+  reads a completed envelope with its completion and may call `attachFinal()`;
+  `HostHookAfterSaveTest` fails if an event reaches the host before its save.
+  Holding changes when the host hears, never the chain. The hook can never fail the
   request: `tell()` swallows, and the Laravel bridge's `QueuedSignListener`
   catches and reports; each guard has a test that throws through it
   (`SignListenerTest`, `HostHookTest`). The event carries no `data`, so nothing

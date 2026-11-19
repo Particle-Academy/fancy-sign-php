@@ -8,6 +8,18 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Host hooks for `envelope.completed` / `seal.applied` now fire after the
+  envelope is saved; listeners can call `attachFinal`; consumers do nothing.**
+  Completion recorded both events, and so queued their delivery, before the
+  completion was issued and the envelope saved as completed. Under the sync
+  queue the delivery ran inside `sign()`, so a listener calling `attachFinal()`
+  always got `envelope_not_completed` (and could race under a real queue). Every
+  event of a `sign()` call is now told to the host once that call's writes are
+  saved. The chain itself, its order and its bytes, is unchanged; a transaction
+  the host rolls back still delivers nothing.
+
 ## [0.7.0] - 2026-11-19
 
 **pdf mode is unchanged: consumers do nothing unless they opt in to

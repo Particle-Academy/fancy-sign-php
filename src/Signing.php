@@ -45,6 +45,9 @@ final class Signing
 
     private readonly string $sealPublic;
 
+    /** @var list<array<string, mixed>>|null chained events not yet told to the host ({@see holdingEvents()}); null when not holding */
+    private ?array $held = null;
+
     /**
      * @param  callable(string): string  $linkUrl  the signer's page URL for a link token
      */
@@ -860,6 +863,13 @@ final class Signing
      */
     public function sign(string $token, ?string $session, array $input, Context $ctx): array
     {
+        // The host hears this signature's events (and a completion's) once the envelope is saved.
+        return $this->holdingEvents(fn (): array => $this->signNow($token, $session, $input, $ctx));
+    }
+
+    /** @param  array{fields?: mixed, mark?: mixed, adoption?: mixed, code?: mixed, passkey?: mixed}  $input */
+    private function signNow(string $token, ?string $session, array $input, Context $ctx): array
+    {
         [$env, $signer] = $this->openLink($token);
         $this->signerMayAct($signer);
         $this->session($env, $signer, $session);
@@ -1040,6 +1050,12 @@ final class Signing
     }
 
     private function complete(array $env): void
+    {
+        // envelope.completed and seal.applied reach the host after the save at the end, never before.
+        $this->holdingEvents(fn () => $this->completeNow($env));
+    }
+
+    private function completeNow(array $env): void
     {
         if (self::isData($env)) {
             $this->completeData($env);
@@ -1735,9 +1751,45 @@ final class Signing
 
             return $event;
         });
-        $this->tell($event);
+        if ($this->held !== null) {
+            $this->held[] = $event;
+        } else {
+            $this->tell($event);
+        }
 
         return $event;
+    }
+
+    /**
+     * Run `$fn` with the host hook HELD: every event it appends is chained at
+     * once (the chain's order never changes) but told to the host only when
+     * `$fn` returns, after its writes are saved. A host listener that reacts to
+     * envelope.completed or seal.applied therefore reads a completed envelope
+     * with its completion, even when delivery runs inline (the sync queue).
+     * On a throw the held events are still told: they are chained, and the
+     * Laravel bridge dispatches after the commit, so a host transaction that
+     * rolls back delivers nothing.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $fn
+     * @return T
+     */
+    private function holdingEvents(callable $fn): mixed
+    {
+        if ($this->held !== null) {
+            return $fn();
+        }
+        $this->held = [];
+        try {
+            return $fn();
+        } finally {
+            $held = $this->held;
+            $this->held = null;
+            foreach ($held as $event) {
+                $this->tell($event);
+            }
+        }
     }
 
     /**
