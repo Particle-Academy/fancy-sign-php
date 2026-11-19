@@ -25,6 +25,9 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
 | `src/Repository/` | the storage contract and the in-memory store |
 | `src/Laravel/` | provider, database store, mailer, sender policy, controllers |
 | `src/Support/CanonicalJson.php` | change-council's canonical JSON, copied |
+| `src/Data/CanonicalDocument.php` | `fsig-data-1`, data mode's canonical form (floats printed as ECMAScript does) |
+| `src/Data/SignatureRecord.php`, `DataCompletion.php` | data mode's `fsig_sig_v1_` per-signature record and `fsig_v2_` completion |
+| `src/Data/DataTree.php` | the only reads INTO host data: pointer resolution, the `last-word` image check |
 
 ## Invariants
 
@@ -46,8 +49,32 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
   completion record, the mark) holds integers or strings. A drawn mark is
   quantised to integers on `Renderer::GRID` before it is stored or hashed.
   Placement rects (floats) live on the envelope and never in an event.
-- **`page.viewed` is the only client-sourced event**, and `EventChain::append`
-  refuses any other pairing. Show it labelled as browser-reported.
+- **`page.viewed` and `document.rendered` are the only client-sourced
+  events** (`EventChain::CLIENT_TYPES`), and `EventChain::append` refuses any
+  other pairing. Show them labelled as browser-reported.
+- **Data mode (CC-fancy-0052) is primitives, never a workflow.** `send()`
+  mails no one; only `invite()` mints a link; `inviteNextGroup()` flips the next
+  group to `pending` WITHOUT mail; nothing follows completion. A change that
+  makes the package decide when someone is invited, or what happens after a
+  signature, is outside the CC.
+- **Data mode never reaches `buildAsSent()`.** No as-sent or final blob, no
+  PDF; `preview()`/`previewDocument()` go through `pdfPreviewEnvelope()`, which
+  refuses a data envelope. `DataModeTest` asserts the only blob is `data/{id}`.
+- **Data arrives as JSON text or stdClass, never an assoc array**, and the
+  HTTP routes read `data` from the raw body (`SenderController::input()`):
+  `$request->only()` decodes with `assoc: true`. `DataHttpTest` fails against
+  the `only()` version (verified when it was written). The required
+  `data_sha256` catches any drift at create time.
+- **Floats are refused everywhere except `fsig-data-1`.** The data itself is
+  the only hashed thing that may hold floats; records, events and marks keep
+  `CanonicalJson`.
+- **pdf mode is 0.6.0 byte for byte.** `PdfModeUnchangedTest`, the
+  conformance goldens, `SigningOrderTest` and `FinalPageTest` pin it. The data
+  branches key on `document.mode` (`isData()`), and an envelope stored without
+  it is pdf.
+- **The ceremony is live:** nothing presentational is stored on a data
+  envelope or put in its SignerView. `LiveCeremonyTest` holds allow-lists of
+  keys; a new key there is a decision.
 - **The as-sent PDF is a byte-for-byte prefix of the final one.** The final
   PDF is made only by fine-print's `Incremental::overlay`. `as_sent_bytes` is in
   the sealed record, so the prefix check needs no file of ours.
@@ -87,7 +114,7 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
 
 ## Conformance (`sign/*` in fancy-conformance)
 
-This package is the REFERENCE for the four `sign/*` suites a port
+This package is the REFERENCE for the five `sign/*` suites a port
 (fancy-sign-js) is held to. `tests/Conformance/Export.php` authors every row and
 computes every golden by running this package; `composer conformance:export`
 writes them into `../fancy-conformance/suites/sign/`. `ConformanceTest` replays

@@ -6,6 +6,10 @@ namespace FancySign;
 
 use FancySign\Chain\EventChain;
 use FancySign\Completion\Completion;
+use FancySign\Data\CanonicalDocument;
+use FancySign\Data\DataCompletion;
+use FancySign\Data\DataTree;
+use FancySign\Data\SignatureRecord;
 use FancySign\Events\EnvelopeEventRecorded;
 use FancySign\Listener\SignListener;
 use FancySign\Mail\SignMailer;
@@ -82,38 +86,103 @@ final class Signing
         $id = self::ulid($this->clock->now()->getTimestamp());
         $env = $this->validated($input, ['id' => $id, 'org_id' => $orgId, 'status' => 'draft', 'created_at' => $this->at(),
             'sent_at' => null, 'completed_at' => null, 'completion' => null, 'created_by' => $actor]);
-        $this->repo->saveEnvelope($env);
+        $env = $this->store($env);
         $this->event($id, 'envelope.created', $actor, Context::none(), ['title' => $env['title']]);
 
         return $this->wire($env);
     }
 
-    /** Change a draft: any of title, document, signers, settings. */
+    /**
+     * Change a draft: any of title, document, signers, settings; in data mode
+     * also data (with its data_sha256), fields and data_profile. Settings given
+     * without a mode keep the draft's mode.
+     */
     public function update(string $id, array $input, string $actor): array
     {
         $env = $this->find($id);
         if ($env['status'] !== 'draft') {
             throw new SignError('envelope_not_draft', 'Only a draft envelope can be changed.');
         }
-        $merged = [
-            'title' => $input['title'] ?? $env['title'],
-            'document' => $input['document'] ?? $env['document']['model'],
-            'signers' => $input['signers'] ?? self::signerInputs($env['signers']),
-            'settings' => $input['settings'] ?? $this->storedSettings($env),
-        ];
+        $merged = $this->inputOf($env);
+        foreach ($input as $k => $v) {
+            if ($v !== null) {
+                $merged[$k] = $v;
+            }
+        }
+        if (is_array($input['settings'] ?? null) && ! array_key_exists('mode', $input['settings'])) {
+            $merged['settings']['mode'] = self::modeOf($env);
+        }
+        // New data comes with its own hash, or it is refused: the stored hash is of the old data.
+        if (array_key_exists('data', $input)) {
+            $merged['data_sha256'] = $input['data_sha256'] ?? null;
+        }
         $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
-        $env = $this->validated($merged, $keep);
-        $this->repo->saveEnvelope($env);
+        $env = $this->store($this->validated($merged, $keep));
 
         return $this->wire($env);
     }
 
-    /** Render the as-sent PDF, fix every field's placement, mail every signer a link. */
+    /**
+     * A stored envelope as create() input again, for update() and send().
+     *
+     * @return array<string, mixed>
+     */
+    private function inputOf(array $env): array
+    {
+        $input = ['title' => $env['title'], 'signers' => self::signerInputs($env['signers']), 'settings' => $this->storedSettings($env)];
+        if (! self::isData($env)) {
+            return $input + ['document' => $env['document']['model']];
+        }
+        $declared = array_values(array_filter($env['fields'], fn (array $f) => ! isset($f['anchor']['every_page'])));
+
+        return $input + [
+            'data' => $this->repo->blob("data/{$env['id']}"),
+            'data_sha256' => $env['document']['data_sha256'],
+            'data_profile' => $env['document']['profile'],
+            'fields' => array_map(fn (array $f) => ['id' => $f['id'], 'signer' => $f['signer_id'], 'kind' => $f['kind'],
+                'required' => $f['required'], 'label' => $f['label'], 'anchor' => $f['anchor']], $declared),
+        ];
+    }
+
+    /** Save a validated envelope; in data mode its canonical data goes to the blob `data/{id}` first. */
+    private function store(array $env): array
+    {
+        if (array_key_exists('_canonical', $env)) {
+            $this->repo->putBlob("data/{$env['id']}", $env['_canonical']);
+            unset($env['_canonical']);
+        }
+        $this->repo->saveEnvelope($env);
+
+        return $env;
+    }
+
+    /** settings.mode of a stored envelope: one stored before 0.7 has none and is pdf. */
+    private static function modeOf(array $env): string
+    {
+        return ($env['document']['mode'] ?? 'pdf') === 'data' ? 'data' : 'pdf';
+    }
+
+    private static function isData(array $env): bool
+    {
+        return self::modeOf($env) === 'data';
+    }
+
+    /**
+     * pdf mode: render the as-sent PDF, fix every field's placement, mail every
+     * signer a link.
+     *
+     * Data mode: FIX the data and nothing else. No mail, no link: inviting is
+     * the host's workflow, done with invite() when the host decides. Under
+     * settings.order sequential, later groups are set waiting.
+     */
     public function send(string $id, string $actor): array
     {
         $env = $this->find($id);
         if ($env['status'] !== 'draft') {
             throw new SignError('envelope_not_draft', 'Only a draft envelope can be sent.');
+        }
+        if (self::isData($env)) {
+            return $this->sendData($env, $actor);
         }
         if ($env['org_id'] !== null && $this->orgSettings($env['org_id'])['per_page'] !== $env['settings']['per_page']) {
             // The org admin changed the per-page setting since the draft was made: send under the one in force now.
@@ -182,9 +251,71 @@ final class Signing
         foreach ($unsigned as $signer) {
             if ($signer['order'] === $next && $signer['status'] === 'waiting') {
                 $this->updateSigner($env['id'], $signer['id'], ['status' => 'pending']);
-                $this->mailLink($env, ['status' => 'pending'] + $signer, 'system', 'email.sent');
+                // Data mode: the order is a guard, never a scheduler. The next group may now be
+                // invited, and the HOST invites it when its own workflow says so.
+                if (! self::isData($env)) {
+                    $this->mailLink($env, ['status' => 'pending'] + $signer, 'system', 'email.sent');
+                }
             }
         }
+    }
+
+    /** send() in data mode: fix the data. Mails no one. */
+    private function sendData(array $env, string $actor): array
+    {
+        if ($env['org_id'] !== null && $this->orgSettings($env['org_id'])['per_page'] !== $env['settings']['per_page']) {
+            // The org admin changed the per-page lock since the draft was made: send under the one in force now.
+            $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
+            $env = $this->validated($this->inputOf($env), $keep);
+            unset($env['_canonical']);
+        }
+        if (self::isSequential($env)) {
+            $first = min(array_column($env['signers'], 'order'));
+            foreach ($env['signers'] as &$s) {
+                if ($s['order'] !== $first) {
+                    $s['status'] = 'waiting';
+                }
+            }
+            unset($s);
+        }
+        $env['status'] = 'sent';
+        $env['sent_at'] = $this->at();
+        $this->repo->saveEnvelope($env);
+        $this->event($env['id'], 'envelope.sent', $actor, Context::none(), ['mode' => 'data', 'data_sha256' => $env['document']['data_sha256'],
+            'data_bytes' => $env['document']['data_bytes'], 'fields_sha256' => $env['document']['fields_sha256']]);
+
+        return $this->wire($this->find($env['id']));
+    }
+
+    /**
+     * Data mode: invite one signer, when the HOST decides. Mints a link
+     * (replacing any older one, which stops working), hands it to the host's
+     * SignMailer, and records `email.sent` the first time or `reminder.sent`
+     * after that. The token reaches only the mailer and is stored only as a
+     * hash.
+     *
+     * Refused unless the envelope is open (`envelope_not_open`, expiry applied),
+     * for a signer who has signed or declined, and under settings.order
+     * sequential for a signer whose group is not the current one
+     * (`not_your_turn`). Refused in pdf mode, whose send() already invites.
+     *
+     * @return array<string, mixed> the envelope, wire shape
+     */
+    public function invite(string $id, string $signerId, string $actor): array
+    {
+        $env = $this->find($id);
+        if (! self::isData($env)) {
+            throw new SignError('invalid_request', 'invite() is for data mode; a pdf envelope invites every signer when it is sent.');
+        }
+        $env = $this->openEnvelope($env);
+        $signer = array_column($env['signers'], null, 'id')[$signerId] ?? throw new SignError('not_found', 'No such signer on this envelope.');
+        $this->signerMayAct($signer);
+        if ($signer['status'] === 'waiting') {
+            throw new SignError('not_your_turn', 'This signer\'s group is not the current one: the signers before it have not all signed.');
+        }
+        $this->mailLink($env, $signer, $actor, ($signer['invited_at'] ?? null) === null ? 'email.sent' : 'reminder.sent');
+
+        return $this->wire($this->find($id));
     }
 
     /**
@@ -213,7 +344,39 @@ final class Signing
      */
     public function preview(array $input, ?string $orgId = null): string
     {
-        return $this->renderAsSent($this->buildAsSent($this->previewEnvelope($input, $orgId), preview: true))['bytes'];
+        return $this->renderAsSent($this->buildAsSent($this->pdfPreviewEnvelope($input, $orgId), preview: true))['bytes'];
+    }
+
+    /**
+     * Data mode's preview: exactly what create() would store for this input,
+     * refused exactly as create() is, before anything exists. Side-effect free.
+     *
+     * `data` is the canonical (fsig-data-1) text, `canonical` the form's name.
+     *
+     * @param  array<string, mixed>  $input  as create(), with settings.mode data
+     * @return array{data_sha256: string, data_bytes: int, canonical: string, data: string, profile: ?string, fields: list<array<string, mixed>>, fields_sha256: string}
+     */
+    public function previewData(array $input, ?string $orgId = null): array
+    {
+        if ((is_array($input['settings'] ?? null) ? ($input['settings']['mode'] ?? 'pdf') : 'pdf') !== 'data') {
+            throw new SignError('invalid_request', 'previewData() is for settings.mode data; preview() and previewDocument() preview a pdf envelope.');
+        }
+        $env = $this->previewEnvelope($input, $orgId);
+
+        return ['data_sha256' => $env['document']['data_sha256'], 'data_bytes' => $env['document']['data_bytes'],
+            'canonical' => $env['document']['canonical'], 'data' => $env['_canonical'], 'profile' => $env['document']['profile'],
+            'fields' => $env['fields'], 'fields_sha256' => $env['document']['fields_sha256']];
+    }
+
+    /** previewEnvelope() for the pdf previews, which data mode has no use for: it has no as-sent document. */
+    private function pdfPreviewEnvelope(array $input, ?string $orgId): array
+    {
+        $env = $this->previewEnvelope($input, $orgId);
+        if (self::isData($env)) {
+            throw new SignError('invalid_request', 'A data-mode envelope has no as-sent document to preview; use previewData().');
+        }
+
+        return $env;
     }
 
     /**
@@ -232,7 +395,7 @@ final class Signing
      */
     public function previewDocument(array $input, ?string $orgId = null): array
     {
-        return $this->buildAsSent($this->previewEnvelope($input, $orgId), preview: true);
+        return $this->buildAsSent($this->pdfPreviewEnvelope($input, $orgId), preview: true);
     }
 
     /** The envelope a preview stands in for: validated as create() validates, never stored. */
@@ -291,12 +454,16 @@ final class Signing
         return $this->wire($env);
     }
 
-    /** Mail every signer who has not finished a NEW link. The old one stops working. */
+    /**
+     * Mail every signer who has not finished a NEW link. The old one stops
+     * working. In data mode only signers the host has already invited: a
+     * reminder never invites anyone.
+     */
     public function remind(string $id, string $actor): array
     {
         $env = $this->openEnvelope($this->find($id));
         foreach ($env['signers'] as $signer) {
-            if (in_array($signer['status'], ['pending', 'viewed'], true)) {
+            if (in_array($signer['status'], ['pending', 'viewed'], true) && (! self::isData($env) || ($signer['invited_at'] ?? null) !== null)) {
                 $this->mailLink($env, $signer, $actor, 'reminder.sent');
             }
         }
@@ -334,10 +501,43 @@ final class Signing
         return $this->repo->blob("final/{$id}") ?? throw new SignError('not_found', 'The envelope is not completed.');
     }
 
-    /** The final document if completed, else the as-sent one. */
+    /** The final document if completed, else the as-sent one. A data-mode envelope has neither. */
     public function currentDocument(string $id): string
     {
         return $this->repo->blob("final/{$id}") ?? $this->asSentDocument($id);
+    }
+
+    /** Data mode: the data's canonical (fsig-data-1) bytes, for the sender. */
+    public function dataDocument(string $id): string
+    {
+        $env = $this->find($id);
+
+        return self::isData($env) ? ($this->repo->blob("data/{$id}") ?? throw new SignError('not_found', 'No data is stored for this envelope.'))
+            : throw new SignError('not_found', 'A pdf envelope has no data document.');
+    }
+
+    /**
+     * Data mode: every signature so far, for the host. `record` is the sealed
+     * signature record; `mark` is the adopted mark (what a host needs to draw
+     * its own final PDF, and which the wire envelope omits); `fields_completed`
+     * the ids the signer completed.
+     *
+     * @return list<array{record: array<string, mixed>, mark: array<string, mixed>, fields_completed: list<string>}>
+     */
+    public function signatures(string $id): array
+    {
+        $env = $this->find($id);
+        if (! self::isData($env)) {
+            throw new SignError('invalid_request', 'Signature records are made in data mode; a pdf envelope has its completion record.');
+        }
+        $out = [];
+        foreach ($env['signers'] as $s) {
+            if (($s['signature'] ?? null) !== null) {
+                $out[] = ['record' => $s['signature'], 'mark' => $s['mark'], 'fields_completed' => $s['completed_fields'] ?? []];
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -354,6 +554,9 @@ final class Signing
         if ($format === 'json') {
             return ['envelope' => $env, 'completion' => $env['completion'], 'events' => $events, 'reference' => $reference];
         }
+        if (self::isData($stored)) {
+            throw new SignError('invalid_request', 'The certificate of a data-mode envelope is available as JSON (format=json); its PDF comes in a later release.');
+        }
 
         return $this->renderer->certificate($env, $events, $reference);
     }
@@ -368,6 +571,11 @@ final class Signing
      */
     private function reference(array $env): ?array
     {
+        if (self::isData($env)) {
+            // Data mode prints nothing: the reference is the envelope and the hash of what was signed.
+            return $env['sent_at'] === null ? null
+                : ['envelope' => 'Envelope '.$env['id'], 'data_sha256' => $env['document']['data_sha256'], 'canonical' => $env['document']['canonical']];
+        }
         if ($env['document']['as_sent_sha256'] === null) {
             return null;
         }
@@ -467,23 +675,94 @@ final class Signing
         return $this->signerView($token, $session);
     }
 
-    /** The as-sent PDF. The first open, after consent, is the server-observed `document.opened`. */
+    /**
+     * The as-sent PDF, or in data mode the data's canonical bytes. The first
+     * open, after consent, is the server-observed `document.opened`.
+     */
     public function document(string $token, ?string $session, Context $ctx): string
+    {
+        return $this->signerDocument($token, $session, $ctx)['bytes'];
+    }
+
+    /**
+     * document(), saying what it is: `mode` pdf (the as-sent PDF) or data (the
+     * canonical JSON), the bytes, and their sha256. In data mode the first
+     * fetch after consent appends `document.opened {data_sha256}`: proof the
+     * signer's session RECEIVED exactly those bytes, not that they were shown.
+     *
+     * @return array{mode: string, bytes: string, sha256: string}
+     */
+    public function signerDocument(string $token, ?string $session, Context $ctx): array
     {
         [$env, $signer] = $this->openLink($token, mustBeOpen: false);
         $this->session($env, $signer, $session);
         if ($signer['consent'] === null) {
             throw new SignError('consent_required', 'Consent to sign electronically comes before the document.');
         }
+        $data = self::isData($env);
         if (($signer['viewed_at'] ?? null) === null) {
-            $event = $this->event($env['id'], 'document.opened', $this->actor($signer), $ctx, ['as_sent_sha256' => $env['document']['as_sent_sha256']]);
+            $event = $this->event($env['id'], 'document.opened', $this->actor($signer), $ctx,
+                $data ? ['data_sha256' => $env['document']['data_sha256']] : ['as_sent_sha256' => $env['document']['as_sent_sha256']]);
             $this->updateSigner($env['id'], $signer['id'], ['viewed_at' => $event['at']] + ($signer['status'] === 'pending' ? ['status' => 'viewed'] : []));
         }
+        $bytes = $data ? $this->dataDocument($env['id']) : $this->asSentDocument($env['id']);
 
-        return $this->asSentDocument($env['id']);
+        return ['mode' => $data ? 'data' : 'pdf', 'bytes' => $bytes, 'sha256' => hash('sha256', $bytes)];
     }
 
-    /** A page the signer's browser says it showed. A claim, stored as `source: client`, and capped. */
+    /** The longest renderer string a rendering claim may carry. */
+    public const MAX_RENDERER = 200;
+
+    /**
+     * Data mode: which presentation the signer's browser says it showed, as
+     * `document.rendered {data_sha256, renderer, pages}`, source client. A
+     * CLAIM, labelled so, as page.viewed is. `renderer` is the host's string
+     * (template and app release), control characters stripped, 1 to 200
+     * characters; `pages` 1 to `data.max_pages`. Needs the session, the data
+     * opened first and the stored hash; at most `page_views.per_signer` per
+     * signer. The latest claim bounds page.viewed and goes into the signature
+     * record.
+     *
+     * @param  array{data_sha256?: mixed, renderer?: mixed, pages?: mixed}  $claim
+     */
+    public function documentRendered(string $token, ?string $session, mixed $claim, Context $ctx): void
+    {
+        [$env, $signer] = $this->openLink($token);
+        $this->signerMayAct($signer);
+        $this->session($env, $signer, $session);
+        if (! self::isData($env)) {
+            throw new SignError('invalid_request', 'A rendering claim is for a data-mode envelope; a pdf envelope reports page.viewed.');
+        }
+        if (($signer['viewed_at'] ?? null) === null) {
+            throw new SignError('not_viewed', 'The data has not been opened.');
+        }
+        $claim = is_array($claim) ? $claim : [];
+        if (($claim['data_sha256'] ?? null) !== $env['document']['data_sha256']) {
+            throw new SignError('data_hash_mismatch', 'The rendering claim names other data than this envelope signs.');
+        }
+        $renderer = $claim['renderer'] ?? null;
+        $renderer = is_string($renderer) && mb_check_encoding($renderer, 'UTF-8') ? trim((string) preg_replace('/[\x00-\x1F\x7F]/u', '', $renderer)) : '';
+        if ($renderer === '' || mb_strlen($renderer, 'UTF-8') > self::MAX_RENDERER) {
+            throw new SignError('invalid_request', 'renderer is the host\'s template and release, 1 to '.self::MAX_RENDERER.' characters.');
+        }
+        $pages = $claim['pages'] ?? null;
+        if (! is_int($pages) || $pages < 1 || $pages > $this->config->int('data.max_pages')) {
+            throw new SignError('invalid_request', 'pages is a whole number from 1 to '.$this->config->int('data.max_pages').'.');
+        }
+        $forever = 10 * 365 * 86400;
+        if ($this->repo->hit("dr|{$env['id']}|{$signer['id']}", $forever, $this->clock->now()->getTimestamp()) > $this->config->int('page_views.per_signer')) {
+            throw new SignError('limit_exceeded', 'Enough rendering claims have been recorded for this signer.');
+        }
+        $event = $this->event($env['id'], 'document.rendered', $this->actor($signer), $ctx,
+            ['data_sha256' => $env['document']['data_sha256'], 'renderer' => $renderer, 'pages' => $pages], 'client');
+        $this->updateSigner($env['id'], $signer['id'], ['rendered' => ['seq' => $event['seq'], 'renderer' => $renderer, 'pages' => $pages]]);
+    }
+
+    /**
+     * A page the signer's browser says it showed. A claim, stored as `source:
+     * client`, and capped. In data mode a page is one of the pages of the
+     * signer's latest rendering claim: no claim, no page claims.
+     */
     public function pageViewed(string $token, ?string $session, mixed $page, mixed $ms, Context $ctx): void
     {
         [$env, $signer] = $this->openLink($token);
@@ -491,7 +770,8 @@ final class Signing
         if (($signer['viewed_at'] ?? null) === null) {
             throw new SignError('not_viewed', 'The document has not been opened.');
         }
-        if (! is_int($page) || $page < 1 || $page > (int) $env['document']['pages'] || ! is_int($ms) || $ms < 0 || $ms > $this->config->int('page_views.max_ms')) {
+        $pages = self::isData($env) ? (int) ($signer['rendered']['pages'] ?? 0) : (int) $env['document']['pages'];
+        if (! is_int($page) || $page < 1 || $page > $pages || ! is_int($ms) || $ms < 0 || $ms > $this->config->int('page_views.max_ms')) {
             throw new SignError('invalid_request', 'page must be a page of the document and ms a whole number of milliseconds.');
         }
         $forever = 10 * 365 * 86400;
@@ -534,12 +814,25 @@ final class Signing
                 throw new SignError('fields_incomplete', 'Every required field must be completed.');
             }
         }
+        $data = self::isData($env);
+        if ($data) {
+            // Checked before the accept code, which is checked LAST, so a mismatch burns nothing.
+            $sent = $input['data_sha256'] ?? null;
+            if (! is_string($sent) || $sent === '') {
+                throw new SignError('invalid_request', 'data_sha256 is required: the hash of the data the signer was shown.');
+            }
+            if (! hash_equals($env['document']['data_sha256'], $sent)) {
+                throw new SignError('data_hash_mismatch', 'The data you were shown is not the data this envelope signs. Reload and review it again.');
+            }
+        }
+        // The content hash the signer signs: the as-sent PDF's, or the data's.
+        $contentHash = $data ? $env['document']['data_sha256'] : $env['document']['as_sent_sha256'];
         $method = 'otp';
         $stepUpEvidence = null;
         if ($env['settings']['step_up'] === 'passkey') {
             $assertion = $input['passkey'] ?? null;
             $stepUpEvidence = is_array($assertion) && $this->stepUp !== null
-                ? $this->stepUp->verify($env['id'], $signer['id'], $env['document']['as_sent_sha256'], $assertion) : null;
+                ? $this->stepUp->verify($env['id'], $signer['id'], $contentHash, $assertion) : null;
             if ($stepUpEvidence === null) {
                 throw new SignError('step_up_required', 'This envelope needs a passkey confirmation to sign.');
             }
@@ -554,18 +847,41 @@ final class Signing
                 $this->event($env['id'], 'field.completed', $actor, $ctx, ['field_id' => $f['id'], 'kind' => $f['kind']]);
             }
         }
+        $markSha = hash('sha256', Support\CanonicalJson::encode($mark));
         $this->event($env['id'], 'mark.adopted', $actor, $ctx, [
-            'kind' => $mark['kind'], 'mark_sha256' => hash('sha256', Support\CanonicalJson::encode($mark)),
+            'kind' => $mark['kind'], 'mark_sha256' => $markSha,
             'adoption_text_sha256' => hash('sha256', $this->config->adoptionText()),
         ]);
+        $rendered = $data ? ($signer['rendered'] ?? null) : null;
         $signed = $this->event($env['id'], 'signer.signed', $actor, $ctx, array_filter([
-            'as_sent_sha256' => $env['document']['as_sent_sha256'], 'method' => $method, 'otp_seq' => $otp['seq'],
-            'consent_seq' => $signer['consent_seq'], 'step_up' => $stepUpEvidence,
+            ($data ? 'data_sha256' : 'as_sent_sha256') => $contentHash, 'method' => $method, 'otp_seq' => $otp['seq'],
+            'consent_seq' => $signer['consent_seq'], 'step_up' => $stepUpEvidence, 'rendered_seq' => $rendered['seq'] ?? null,
         ], fn ($v) => $v !== null));
+        $record = null;
+        if ($data) {
+            // The signing hash per signature: one sealed record, its token on the chain right after signer.signed.
+            $completed = array_values(array_map(fn (array $f) => $f['id'], array_filter($mine, fn (array $f) => ($given[$f['id']] ?? false) === true)));
+            $record = SignatureRecord::issue([
+                'envelope_id' => $env['id'], 'signer_id' => $signer['id'], 'name' => $signer['name'], 'email' => $signer['email'],
+                'signed_at' => $signed['at'], 'method' => $method, 'otp_seq' => $otp['seq'], 'consent_seq' => $signer['consent_seq'],
+                'rendered_seq' => $rendered['seq'] ?? null, 'renderer' => $rendered['renderer'] ?? null,
+                'data_sha256' => $env['document']['data_sha256'], 'data_bytes' => $env['document']['data_bytes'],
+                'canonical' => $env['document']['canonical'], 'profile' => $env['document']['profile'],
+                'fields_sha256' => $env['document']['fields_sha256'], 'fields' => $completed,
+                // One per-page field covers every page the signer's browser last reported; one continuous page (or no claim) is one mark.
+                'per_page_pages' => $env['settings']['per_page'] === 'none' ? null : (int) ($rendered['pages'] ?? 1),
+                'mark_sha256' => $markSha, 'adoption_text_sha256' => hash('sha256', $this->config->adoptionText()),
+                'consent_text_sha256' => $signer['consent']['text_sha256'],
+                'step_up_sha256' => $stepUpEvidence === null ? null : hash('sha256', Support\CanonicalJson::encode($stepUpEvidence)),
+                'chain_head' => $signed['hash'], 'key_id' => Ed25519::keyId($this->sealPublic),
+            ], $this->sealSecretKey);
+            $this->event($env['id'], 'signature.sealed', 'system', Context::none(),
+                ['signer_id' => $signer['id'], 'token' => $record['token'], 'key_id' => $record['key_id']]);
+        }
         $this->updateSigner($env['id'], $signer['id'], [
             'status' => 'signed', 'signed_at' => $signed['at'], 'mark' => $mark, 'method' => $method, 'otp_seq' => $otp['seq'],
             'completed_fields' => array_keys(array_filter($given, fn ($v) => $v === true)),
-        ]);
+        ] + ($data ? ['signature' => $record] : []));
 
         $env = $this->find($env['id']);
         if (array_filter($env['signers'], fn (array $s) => $s['status'] !== 'signed') === []) {
@@ -626,8 +942,41 @@ final class Signing
 
     // ================================================================ completion
 
+    /**
+     * Data mode: completion is the reported fact "every signer has signed".
+     * Nothing is rendered, no blob is written and nothing is started:
+     * envelope.completed {data_sha256}, the version-2 completion binding every
+     * signature record under one chain head, seal.applied.
+     */
+    private function completeData(array $env): void
+    {
+        $completed = $this->event($env['id'], 'envelope.completed', 'system', Context::none(), ['data_sha256' => $env['document']['data_sha256']]);
+        $signers = [];
+        foreach ($env['signers'] as $s) {
+            $signers[] = ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email'], 'signed_at' => $s['signed_at'],
+                'method' => $s['method'], 'otp_seq' => $s['otp_seq'], 'consent_seq' => $s['consent_seq'], 'signature' => $s['signature']['token']];
+        }
+        $completion = DataCompletion::issue([
+            'envelope_id' => $env['id'], 'data_sha256' => $env['document']['data_sha256'], 'data_bytes' => $env['document']['data_bytes'],
+            'canonical' => $env['document']['canonical'], 'profile' => $env['document']['profile'], 'fields_sha256' => $env['document']['fields_sha256'],
+            'signers' => $signers, 'chain_head' => $completed['hash'], 'key_id' => Ed25519::keyId($this->sealPublic),
+        ], $this->sealSecretKey);
+        $this->event($env['id'], 'seal.applied', 'system', Context::none(), ['token' => $completion['token'], 'key_id' => $completion['key_id']]);
+
+        $env = $this->find($env['id']);
+        $env['completion'] = $completion;
+        $env['status'] = 'completed';
+        $env['completed_at'] = $completed['at'];
+        $this->repo->saveEnvelope($env);
+    }
+
     private function complete(array $env): void
     {
+        if (self::isData($env)) {
+            $this->completeData($env);
+
+            return;
+        }
         $asSent = $this->asSentDocument($env['id']);
         $final = $this->renderer->final($asSent, $env);
         $this->repo->putBlob("final/{$env['id']}", $final);
@@ -667,10 +1016,10 @@ final class Signing
      */
     private function validated(array $input, array $base): array
     {
-        $title = $input['title'] ?? null;
-        if (! is_string($title) || trim($title) === '' || mb_strlen($title, 'UTF-8') > (int) $this->config->get('max_title')) {
-            throw new SignError('invalid_request', 'title is a non-empty string of at most '.$this->config->get('max_title').' characters.');
+        if ((is_array($input['settings'] ?? null) ? ($input['settings']['mode'] ?? 'pdf') : 'pdf') === 'data') {
+            return $this->validatedData($input, $base);
         }
+        $title = $this->title($input);
         $doc = $input['document'] ?? null;
         if (! is_array($doc) || ! is_array($doc['blocks'] ?? null) || count($doc['blocks']) > (int) $this->config->get('max_document_blocks')) {
             throw new SignError('invalid_request', 'document is a fine-print document with a blocks list.');
@@ -680,40 +1029,9 @@ final class Signing
             throw new SignError('invalid_request', 'document is invalid at '.$errors[0]['path'].': '.$errors[0]['message']);
         }
 
-        $list = $input['signers'] ?? null;
-        if (! is_array($list) || ! array_is_list($list) || $list === [] || count($list) > (int) $this->config->get('max_signers')) {
-            throw new SignError('invalid_request', 'signers is a list of 1 to '.$this->config->get('max_signers').' signers.');
-        }
-        $signers = [];
-        foreach ($list as $i => $s) {
-            $sid = $s['id'] ?? 's'.($i + 1);
-            $name = $s['name'] ?? null;
-            $email = $s['email'] ?? null;
-            if (! is_string($sid) || preg_match(Schema::FIELD_ID, $sid) !== 1 || isset($signers[$sid])
-                || ! is_string($name) || trim($name) === '' || mb_strlen($name, 'UTF-8') > (int) $this->config->get('max_name')
-                || ! is_string($email) || strlen($email) > 254 || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-                throw new SignError('invalid_request', "signers[{$i}] needs a unique id (A-Z, a-z, 0-9, _ and -), a name and a valid email.");
-            }
-            $signers[$sid] = ['id' => $sid, 'name' => trim($name), 'email' => $email, 'order' => $i + 1, 'status' => 'pending',
-                'consent' => null, 'consent_seq' => null, 'signed_at' => null, 'declined_at' => null, 'decline_reason' => null,
-                'viewed_at' => null, 'link_opened' => false, 'mark' => null, 'method' => null, 'otp_seq' => null];
-        }
-
+        [$list, $signers] = $this->signerList($input);
         $settings = $this->settings($input['settings'] ?? [], $base['org_id'] ?? null);
-        // settings.order sequential: a signer's `order` is its group (equal orders sign together),
-        // the list position when left out. Under parallel it is the list position, whatever the input
-        // says, exactly as before 0.6.
-        if ($settings['order'] === 'sequential') {
-            foreach ($list as $i => $s) {
-                if (! array_key_exists('order', $s)) {
-                    continue;
-                }
-                if (! is_int($s['order']) || $s['order'] < 1 || $s['order'] > self::MAX_ORDER) {
-                    throw new SignError('invalid_request', "signers[{$i}].order is a whole number from 1 to ".self::MAX_ORDER.'.');
-                }
-                $signers[$s['id'] ?? 's'.($i + 1)]['order'] = $s['order'];
-            }
-        }
+        $signers = $this->signerOrder($list, $signers, $settings);
         $fields = [];
         foreach (self::fieldNodes($doc['blocks']) as $node) {
             if (! isset($signers[$node['signer']])) {
@@ -764,6 +1082,188 @@ final class Signing
         ];
     }
 
+    private function title(array $input): string
+    {
+        $title = $input['title'] ?? null;
+        if (! is_string($title) || trim($title) === '' || mb_strlen($title, 'UTF-8') > (int) $this->config->get('max_title')) {
+            throw new SignError('invalid_request', 'title is a non-empty string of at most '.$this->config->get('max_title').' characters.');
+        }
+
+        return $title;
+    }
+
+    /** @return array{0: list<mixed>, 1: array<string, array<string, mixed>>} the input list, and the signers by id */
+    private function signerList(array $input): array
+    {
+        $list = $input['signers'] ?? null;
+        if (! is_array($list) || ! array_is_list($list) || $list === [] || count($list) > (int) $this->config->get('max_signers')) {
+            throw new SignError('invalid_request', 'signers is a list of 1 to '.$this->config->get('max_signers').' signers.');
+        }
+        $signers = [];
+        foreach ($list as $i => $s) {
+            $sid = $s['id'] ?? 's'.($i + 1);
+            $name = $s['name'] ?? null;
+            $email = $s['email'] ?? null;
+            if (! is_string($sid) || preg_match(Schema::FIELD_ID, $sid) !== 1 || isset($signers[$sid])
+                || ! is_string($name) || trim($name) === '' || mb_strlen($name, 'UTF-8') > (int) $this->config->get('max_name')
+                || ! is_string($email) || strlen($email) > 254 || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+                throw new SignError('invalid_request', "signers[{$i}] needs a unique id (A-Z, a-z, 0-9, _ and -), a name and a valid email.");
+            }
+            $signers[$sid] = ['id' => $sid, 'name' => trim($name), 'email' => $email, 'order' => $i + 1, 'status' => 'pending',
+                'consent' => null, 'consent_seq' => null, 'signed_at' => null, 'declined_at' => null, 'decline_reason' => null,
+                'viewed_at' => null, 'link_opened' => false, 'mark' => null, 'method' => null, 'otp_seq' => null];
+        }
+
+        return [$list, $signers];
+    }
+
+    /**
+     * settings.order sequential: a signer's `order` is its group (equal orders sign together),
+     * the list position when left out. Under parallel it is the list position, whatever the input
+     * says, exactly as before 0.6.
+     */
+    private function signerOrder(array $list, array $signers, array $settings): array
+    {
+        if ($settings['order'] === 'sequential') {
+            foreach ($list as $i => $s) {
+                if (! array_key_exists('order', $s)) {
+                    continue;
+                }
+                if (! is_int($s['order']) || $s['order'] < 1 || $s['order'] > self::MAX_ORDER) {
+                    throw new SignError('invalid_request', "signers[{$i}].order is a whole number from 1 to ".self::MAX_ORDER.'.');
+                }
+                $signers[$s['id'] ?? 's'.($i + 1)]['order'] = $s['order'];
+            }
+        }
+
+        return $signers;
+    }
+
+    /** The field kinds a data-mode field may be (fancy-sign-ui FieldKind). */
+    private const DATA_FIELD_KINDS = ['signature', 'initials', 'date_signed'];
+
+    /** The profiles data mode knows. Absent (null) is opaque data, never inspected. */
+    private const DATA_PROFILES = ['last-word'];
+
+    /**
+     * The data-mode branch of validated() (CC-fancy-0052 section 1.2). The
+     * data is canonicalised (fsig-data-1) and must hash to the host's own
+     * data_sha256; fields are declared beside it with an optional RFC 6901
+     * pointer that must resolve; every signer needs a required signature
+     * field. The envelope keeps the data's facts only; the canonical bytes
+     * ride along as `_canonical` for store() to write as the blob.
+     *
+     * @return array<string, mixed>
+     */
+    private function validatedData(array $input, array $base): array
+    {
+        $title = $this->title($input);
+        $raw = $input['data'] ?? null;
+        if (! is_string($raw) && ! $raw instanceof \stdClass) {
+            throw new SignError('invalid_request', 'data is a JSON object: JSON text, or a tree decoded with objects kept (never an associative array, which cannot tell {} from []).');
+        }
+        try {
+            $canonical = CanonicalDocument::canonical($raw, $this->config->int('data.max_depth'));
+        } catch (\InvalidArgumentException $e) {
+            throw new SignError('invalid_request', 'data cannot be canonicalised (fsig-data-1): '.$e->getMessage());
+        }
+        if (strlen($canonical) > $this->config->int('data.max_bytes')) {
+            throw new SignError('invalid_request', 'data is larger than '.$this->config->int('data.max_bytes').' canonical bytes.');
+        }
+        $hash = $input['data_sha256'] ?? null;
+        if (! is_string($hash) || preg_match('/^[0-9a-f]{64}$/', $hash) !== 1) {
+            throw new SignError('invalid_request', 'data_sha256 is required: the lowercase hex sha256 of the data\'s fsig-data-1 bytes, computed by the host.');
+        }
+        if (! hash_equals(hash('sha256', $canonical), $hash)) {
+            throw new SignError('data_hash_mismatch', 'data_sha256 is not the hash of this data\'s fsig-data-1 bytes: the host and fancy-sign canonicalised different data.');
+        }
+        $profile = $input['data_profile'] ?? null;
+        if ($profile !== null && ! in_array($profile, self::DATA_PROFILES, true)) {
+            throw new SignError('invalid_request', 'data_profile is absent (opaque data) or last-word.');
+        }
+        $tree = json_decode($canonical, false, $this->config->int('data.max_depth') + 1, JSON_THROW_ON_ERROR);
+        if ($profile === 'last-word' && ($at = DataTree::externalImage($tree)) !== null) {
+            throw new SignError('data_external_reference', "{$at}: an image must be inlined as a data: URI so the signed hash covers it.");
+        }
+
+        [$list, $signers] = $this->signerList($input);
+        $in = $input['settings'] ?? [];
+        if (is_array($in) && array_key_exists('final_page', $in)) {
+            throw new SignError('invalid_request', 'settings.final_page is a PDF layout setting; a data-mode envelope has no PDF.');
+        }
+        $settings = $this->settings($in, $base['org_id'] ?? null);
+        // The organisation's final_page is a default, not a lock: data mode has nothing it applies to.
+        unset($settings['final_page']);
+        $signers = $this->signerOrder($list, $signers, $settings);
+
+        $declared = $input['fields'] ?? [];
+        if (! is_array($declared) || ! array_is_list($declared) || count($declared) > $this->config->int('data.max_fields')) {
+            throw new SignError('invalid_request', 'fields is a list of at most '.$this->config->int('data.max_fields').' fields.');
+        }
+        $fields = [];
+        $has = [];
+        foreach ($declared as $i => $f) {
+            $bad = fn (string $why) => new SignError('invalid_request', "fields[{$i}]: {$why}");
+            if (! is_array($f) || array_diff(array_keys($f), ['id', 'signer', 'kind', 'required', 'label', 'anchor']) !== []) {
+                throw $bad('a field is {id, signer, kind, required?, label?, anchor?}.');
+            }
+            if (! is_string($f['id'] ?? null) || preg_match(Schema::FIELD_ID, $f['id']) !== 1) {
+                throw $bad('id is A-Z, a-z, 0-9, _ and -.');
+            }
+            if (! is_string($f['signer'] ?? null) || ! isset($signers[$f['signer']])) {
+                throw $bad('signer names a signer on the envelope.');
+            }
+            if (! in_array($f['kind'] ?? null, self::DATA_FIELD_KINDS, true)) {
+                throw $bad('kind is signature, initials or date_signed.');
+            }
+            $required = $f['required'] ?? true;
+            if (! is_bool($required)) {
+                throw $bad('required is true or false.');
+            }
+            $label = $f['label'] ?? null;
+            if ($label !== null && (! is_string($label) || trim($label) === '' || mb_strlen($label, 'UTF-8') > (int) $this->config->get('max_name'))) {
+                throw $bad('label is a short non-empty string.');
+            }
+            $anchor = $f['anchor'] ?? null;
+            if ($anchor !== null && (! is_array($anchor) || array_keys($anchor) !== ['pointer'] || ! is_string($anchor['pointer'])
+                || ! DataTree::resolves($tree, $anchor['pointer']))) {
+                throw $bad('anchor is absent, null or {pointer}, an RFC 6901 JSON Pointer that resolves in the data.');
+            }
+            if ($required) {
+                $has[$f['signer']][$f['kind']] = true;
+            }
+            $fields[] = ['id' => $f['id'], 'signer_id' => $f['signer'], 'kind' => $f['kind'], 'anchor' => $anchor === null ? null : ['pointer' => $anchor['pointer']],
+                'required' => $required, 'label' => $label === null ? null : trim($label), 'placement' => null];
+        }
+        foreach ($signers as $sid => $s) {
+            if (! isset($has[$sid]['signature'])) {
+                throw new SignError('invalid_request', "every signer needs a required signature field; signer {$sid} has none. Data mode generates no signature section.");
+            }
+            if ($settings['per_page'] !== 'none') {
+                // The organisation's (or sender's) per-page lock: one field, completed once, covering every page the signer's browser reports.
+                $fields[] = ['id' => "every-page-{$settings['per_page']}-{$sid}", 'signer_id' => $sid, 'kind' => $settings['per_page'],
+                    'anchor' => ['every_page' => true], 'required' => true, 'label' => null, 'placement' => null];
+            }
+        }
+        $ids = array_column($fields, 'id');
+        if (count($ids) !== count(array_unique($ids))) {
+            throw new SignError('invalid_request', 'field ids are unique, and never a generated one (every-page-...).');
+        }
+        $fieldsSha = hash('sha256', Support\CanonicalJson::encode(array_map(fn (array $f) => ['id' => $f['id'], 'signer_id' => $f['signer_id'],
+            'kind' => $f['kind'], 'required' => $f['required'], 'label' => $f['label'], 'anchor' => $f['anchor']], $fields)));
+
+        return $base + [
+            'title' => trim($title),
+            'document' => ['mode' => 'data', 'profile' => $profile, 'canonical' => CanonicalDocument::NAME, 'data_sha256' => $hash,
+                'data_bytes' => strlen($canonical), 'fields_sha256' => $fieldsSha, 'as_sent_sha256' => null, 'as_sent_bytes' => null,
+                'final_sha256' => null, 'pages' => null],
+            'settings' => $settings,
+            'signers' => array_values($signers),
+            'fields' => $fields,
+            '_canonical' => $canonical,
+        ];
+    }
+
     // ============================================================ organisation
 
     private const PER_PAGE = ['none', 'initials', 'signature'];
@@ -773,6 +1273,9 @@ final class Signing
 
     /** settings.order: who is invited when. */
     private const ORDER = ['parallel', 'sequential'];
+
+    /** settings.mode: a PDF the package renders, or the host's data. */
+    private const MODES = ['pdf', 'data'];
 
     /** The largest signer order: small enough to be a safe integer in every port. */
     private const MAX_ORDER = 1000000;
@@ -865,7 +1368,13 @@ final class Signing
             'level' => $in['level'] ?? 'ses',
             'seal' => $in['seal'] ?? 'none',
             'expires_at' => $in['expires_at'] ?? null,
+            // settings.mode (CC-fancy-0052): what is signed, a PDF the package renders or the host's data. Fixed at send.
+            // No organisation default (owner, Q5): it is a property of the integration, not an org policy.
+            'mode' => $in['mode'] ?? 'pdf',
         ];
+        if (! in_array($s['mode'], self::MODES, true)) {
+            throw new SignError('invalid_request', 'settings.mode is pdf or data.');
+        }
         if (! in_array($s['per_page'], self::PER_PAGE, true)) {
             throw new SignError('invalid_request', 'settings.per_page is none, initials or signature.');
         }
@@ -1109,7 +1618,10 @@ final class Signing
         $this->repo->deleteLinks($env['id'], $signer['id']);
         $this->repo->putLink(hash('sha256', $token), $env['id'], $signer['id']);
         $this->mailer->sendLink($signer['email'], $signer['name'], $env['title'], ($this->linkUrl)($token));
-        $this->event($env['id'], $eventType, $actor, Context::none(), ['signer_id' => $signer['id']]);
+        $event = $this->event($env['id'], $eventType, $actor, Context::none(), ['signer_id' => $signer['id']]);
+        if (($signer['invited_at'] ?? null) === null) {
+            $this->updateSigner($env['id'], $signer['id'], ['invited_at' => $event['at']]);
+        }
     }
 
     /** @param array<string, mixed> $changes */
@@ -1173,11 +1685,17 @@ final class Signing
     private function view(array $env, array $signer): array
     {
         $wire = $this->wire($env);
+        $data = self::isData($env);
+        $signerView = ['id' => $signer['id'], 'name' => $signer['name'], 'email' => $signer['email'], 'status' => $signer['status'],
+            'consent_at' => $signer['consent']['at'] ?? null, 'signed_at' => $signer['signed_at'], 'declined_at' => $signer['declined_at']];
 
         return [
-            'envelope' => ['id' => $env['id'], 'title' => $env['title'], 'status' => $env['status'], 'pages' => $env['document']['pages']],
-            'signer' => ['id' => $signer['id'], 'name' => $signer['name'], 'email' => $signer['email'], 'status' => $signer['status'],
-                'consent_at' => $signer['consent']['at'] ?? null, 'signed_at' => $signer['signed_at'], 'declined_at' => $signer['declined_at']],
+            // Data mode: data facts only, never a template, layout or ceremony version. The ceremony is live.
+            'envelope' => $data
+                ? ['id' => $env['id'], 'title' => $env['title'], 'status' => $env['status'], 'mode' => 'data',
+                    'data_sha256' => $env['document']['data_sha256'], 'sent_at' => $env['sent_at']]
+                : ['id' => $env['id'], 'title' => $env['title'], 'status' => $env['status'], 'pages' => $env['document']['pages'], 'mode' => 'pdf'],
+            'signer' => $data ? $signerView + ['signature' => $signer['signature'] ?? null] : $signerView,
             'consent' => ['required' => $signer['consent'] === null, 'text' => $this->config->consentText(), 'version' => $this->config->consentVersion()],
             'adoption_text' => $this->config->adoptionText(),
             'changes_requested' => $this->changeRequests($env['id'], $signer),
@@ -1193,6 +1711,7 @@ final class Signing
         $signers = array_map(fn (array $s) => [
             'id' => $s['id'], 'name' => $s['name'], 'email' => $s['email'], 'order' => $s['order'], 'status' => $s['status'],
             'consent' => $s['consent'], 'signed_at' => $s['signed_at'], 'declined_at' => $s['declined_at'], 'decline_reason' => $s['decline_reason'],
+            'invited_at' => $s['invited_at'] ?? null, 'signature' => $s['signature'] ?? null,
         ], $env['signers']);
         $done = [];
         foreach ($env['signers'] as $s) {
@@ -1204,7 +1723,10 @@ final class Signing
 
         return [
             'id' => $env['id'], 'org_id' => $env['org_id'], 'title' => $env['title'], 'status' => $env['status'],
-            'document' => ['as_sent_sha256' => $env['document']['as_sent_sha256'], 'final_sha256' => $env['document']['final_sha256'], 'pages' => $env['document']['pages']],
+            'document' => ['mode' => self::modeOf($env), 'profile' => $env['document']['profile'] ?? null, 'canonical' => $env['document']['canonical'] ?? null,
+                'data_sha256' => $env['document']['data_sha256'] ?? null, 'data_bytes' => $env['document']['data_bytes'] ?? null,
+                'fields_sha256' => $env['document']['fields_sha256'] ?? null,
+                'as_sent_sha256' => $env['document']['as_sent_sha256'], 'final_sha256' => $env['document']['final_sha256'], 'pages' => $env['document']['pages']],
             'settings' => $env['settings'], 'signers' => $signers, 'fields' => $fields,
             'chain_head' => $events === [] ? EventChain::GENESIS : $events[count($events) - 1]['hash'],
             'completion' => $env['completion'],

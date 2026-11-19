@@ -7,6 +7,7 @@ namespace FancySign\Tests\Conformance;
 use FancySign\Chain\EventChain;
 use FancySign\Completion\Completion;
 use FancySign\Config;
+use FancySign\Data\CanonicalDocument;
 use FancySign\Repository\InMemoryRepository;
 use FancySign\Seal\Ed25519;
 use FancySign\SignError;
@@ -54,10 +55,13 @@ final class Export
     /** The fixture release that added request changes (fancy-sign 0.3.0). */
     public const SINCE_053 = '0.53.0';
 
+    /** The fixture release that adds data mode (CC-fancy-0052, fancy-sign 0.7.0). */
+    public const SINCE_057 = '0.57.0';
+
     /** The `since` new rows get, while a later block is being added. */
     private ?string $since = null;
 
-    public const SUITES = ['sign/chain', 'sign/completion', 'sign/fields', 'sign/otp'];
+    public const SUITES = ['sign/chain', 'sign/completion', 'sign/data', 'sign/fields', 'sign/otp'];
 
     /** A fixed seal seed (32 bytes, hex) so seals are reproducible. Test data, never a real key. */
     public const SEED = '0707070707070707070707070707070707070707070707070707070707070707';
@@ -99,6 +103,7 @@ final class Export
         $e = new self;
         $e->chain();
         $e->completion();
+        $e->data();
         $e->fields();
         $e->otp();
 
@@ -146,6 +151,11 @@ final class Export
             'sign/completion wellFormed' => Completion::wellFormed($input['record']),
             'sign/completion verify' => (new Verifier($input['public_keys']))->verify(
                 (string) base64_decode((string) $input['pdf_base64'], true), $input['completion'], $input['events'] ?? null),
+            'sign/data canonical' => self::guard(function () use ($input): array {
+                $bytes = CanonicalDocument::canonical((string) $input['text']);
+
+                return ['canonical' => $bytes, 'sha256' => hash('sha256', $bytes), 'bytes' => strlen($bytes)];
+            }),
             'sign/fields fields' => self::fieldsOf($input),
             'sign/fields placement' => self::placementOf($input),
             'sign/otp codeDigest' => Signing::codeDigest((string) $input['app_key'], (string) $input['envelope_id'], (string) $input['signer_id'], (string) $input['purpose'], (string) $input['code']),
@@ -486,6 +496,55 @@ final class Export
             ['last' => null, 'event' => ['type' => 'signer.requested_changes', 'actor' => 'signer:alice', 'data' => ['text' => 'Please itemise the delivery.']] + $base], tags: ['append', 'requested-changes']);
         $this->add($c, 'append-refuses-client-requested-changes', 'a request for changes reported by the client is refused: the server observes it', 'append',
             ['last' => null, 'event' => ['type' => 'signer.requested_changes', 'actor' => 'signer:alice', 'source' => 'client', 'data' => ['text' => 'x']] + $base], tags: ['append', 'refusal', 'requested-changes']);
+        $this->since = null;
+
+        // 0.57.0: data mode (fancy-sign 0.7.0). A rendering claim from the browser; each signature record's token.
+        $this->since = self::SINCE_057;
+        $rendered = ['data_sha256' => str_repeat('9', 64), 'renderer' => 'host quote-v7 @ host-app 2026.11.19', 'pages' => 2];
+        $this->add($c, 'append-document-rendered-client', 'document.rendered is a client claim: accepted with source client', 'append',
+            ['last' => null, 'event' => ['type' => 'document.rendered', 'actor' => 'signer:alice', 'source' => 'client', 'data' => $rendered] + $base],
+            notes: 'Which presentation the signer\'s browser says it showed (data mode). A claim, like page.viewed.', tags: ['append', 'data-mode']);
+        $this->add($c, 'append-refuses-server-document-rendered', 'document.rendered from the server is refused: only the browser makes that claim', 'append',
+            ['last' => null, 'event' => ['type' => 'document.rendered', 'actor' => 'signer:alice', 'data' => $rendered] + $base], tags: ['append', 'refusal', 'data-mode']);
+        $this->add($c, 'append-signature-sealed', 'signature.sealed puts a signature record\'s token on the chain, server-observed', 'append',
+            ['last' => null, 'event' => ['type' => 'signature.sealed', 'actor' => 'signer:alice', 'data' => ['signer_id' => 'alice', 'token' => 'fsig_sig_v1_'.str_repeat('a', 64), 'key_id' => '0123456789abcdef']] + $base],
+            tags: ['append', 'data-mode']);
+        $this->add($c, 'append-refuses-client-signature-sealed', 'a client signature.sealed is refused', 'append',
+            ['last' => null, 'event' => ['type' => 'signature.sealed', 'actor' => 'signer:alice', 'source' => 'client', 'data' => ['signer_id' => 'alice']] + $base], tags: ['append', 'refusal', 'data-mode']);
+        $this->since = null;
+    }
+
+    // --------------------------------------------------------------- sign/data
+
+    /**
+     * fsig-data-1 (SPEC section 6.1): the thirteen vectors of the CC-fancy-0052
+     * plan, read from tests/Conformance/fsig-data-1-vectors.json. Inputs are
+     * JSON TEXT: the decoder is part of what is tested.
+     */
+    private function data(): void
+    {
+        $c = 'sign/data';
+        $this->since = self::SINCE_057;
+        $rows = [
+            'd0001' => ['canonical-sorts-keys', 'keys sorted, list order kept, no whitespace', ['canonical', 'control']],
+            'd0002' => ['canonical-floats', 'non-integral numbers print as ECMAScript Number::toString (shortest round trip)', ['canonical', 'numbers']],
+            'd0003' => ['canonical-integral-numbers', 'an integral number prints as an integer whatever its source form; -0 is 0', ['canonical', 'numbers']],
+            'd0004' => ['canonical-exponent-form', 'below 1e-6 the exponent form, as ECMAScript prints it (1e-7, never 1.0e-7)', ['canonical', 'numbers']],
+            'd0005' => ['canonical-objects-stay-objects', 'an object is an object whatever its keys; {} and [] stay apart', ['canonical', 'index-keys']],
+            'd0006' => ['canonical-byte-order-and-escapes', 'UTF-8 byte order for keys; slash, non-ASCII and U+2028 raw; controls escaped', ['canonical']],
+            'd0007' => ['canonical-quote-data', 'opaque host data: a quote as the host stores it, floats and nested arrays', ['canonical', 'control']],
+            'd0008' => ['refuses-unsafe-integer', 'refused: an integral number outside the safe-integer range', ['canonical', 'refusal']],
+            'd0009' => ['refuses-unsafe-integral-float', 'refused: an integral number written as a float beyond 2^53', ['canonical', 'refusal']],
+            'd0010' => ['refuses-lone-surrogate', 'refused: a lone surrogate', ['canonical', 'refusal']],
+            'd0011' => ['refuses-non-object', 'refused: the top level is not an object', ['canonical', 'refusal']],
+            'd0012' => ['canonical-nested-arrays', 'nested arrays of arrays with floats, mixed with objects and nulls', ['canonical', 'numbers']],
+            'd0013' => ['canonical-empty-object', 'the empty object is valid data', ['canonical']],
+        ];
+        $vectors = json_decode((string) file_get_contents(__DIR__.'/fsig-data-1-vectors.json'), true, 8, JSON_THROW_ON_ERROR);
+        foreach ($vectors as $v) {
+            [$slug, $title, $tags] = $rows[$v['id']];
+            $this->add($c, $slug, $title, 'canonical', ['text' => $v['input']], notes: "Plan vector {$v['id']}: {$v['note']}.", tags: $tags);
+        }
         $this->since = null;
     }
 

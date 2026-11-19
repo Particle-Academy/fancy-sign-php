@@ -96,7 +96,9 @@ No third-party code.
   signatures through a trust service. `settings.level` other than `ses` and
   `settings.seal` other than `none` are refused today.
 - `page.viewed` is what the signer's browser says. It is a claim, never proof
-  of reading.
+  of reading. So is `document.rendered` in data mode.
+- In data mode the package fixes the CONTENT, not the presentation: the host's
+  rendering is part of what a reader must trust (see Data mode below).
 - IP addresses and user agents are personal data. They are kept because the
   evidence asks for them; list them in your privacy notice.
 
@@ -218,6 +220,45 @@ $model = $signing->previewDocument(['title' => 'Quote', 'document' => $doc, 'sig
 $model['document'];                        // render it in your own viewer
 $model['signature_section']['placement']; // signature_page, after_content or footer
 ```
+
+## Data mode: sign the host's data, not a PDF (0.7.0)
+
+`settings.mode: "data"` signs an opaque JSON object the host owns (a quote, an
+order) instead of a PDF this package renders. **In data mode the package seals
+the data and the signing evidence; how the data was displayed to each signer,
+and any document made from it, are the host application's.** It supplies
+signing primitives, never a workflow:
+
+```php
+use FancySign\Data\CanonicalDocument;
+
+$json = json_encode($quote);                    // the host's own data
+$env = $signing->create([
+    'title' => 'Quote Q-1001',
+    'settings' => ['mode' => 'data'],
+    'signers' => [['id' => 'buyer', 'name' => 'Pat Buyer', 'email' => 'pat@example.com']],
+    'data' => $json,                            // JSON text, or json_decode($json, false)
+    'data_sha256' => CanonicalDocument::sha256($json),
+    'fields' => [['id' => 'buyer-sig', 'signer' => 'buyer', 'kind' => 'signature', 'anchor' => ['pointer' => '/lines']]],
+], 'user:1');
+$signing->send($env['id'], 'user:1');          // fixes the data; mails NO ONE
+$signing->invite($env['id'], 'buyer', 'user:1'); // when YOUR workflow says so
+```
+
+- The data is hashed in `fsig-data-1`, a canonical JSON form any runtime can
+  reproduce (fancy-conformance `sign/data`); `data_sha256` is required, so a
+  canonicalisation difference is a 422 at create time, never a contract that
+  does not verify.
+- Each signature is its own sealed record (`fsig_sig_v1_`); completion
+  (version 2, `fsig_v2_`) is the reported fact that everyone has signed, and
+  nothing follows it. `Verifier::verifySignature()` proves one signature before
+  anyone else has signed; `Verifier::verifyData()` checks the whole envelope.
+- What the signer's browser says it showed (`document.rendered`, the host's
+  template and release) is recorded as a claim, and copied into each record as
+  one.
+- Changing the data means voiding and sending a new envelope. The signing page
+  itself stays live: a new host template or fancy-sign-ui release reaches every
+  open envelope with no resend.
 
 ## Reacting to signatures
 

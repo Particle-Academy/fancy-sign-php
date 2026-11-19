@@ -34,10 +34,13 @@ final class PublicController extends Controller
     public function verify(Request $request): Response
     {
         return $this->run(function () use ($request) {
-            $pdf = $this->part($request, 'pdf');
             $record = json_decode($this->part($request, 'completion') ?? '', true, 64);
             $eventsRaw = $this->part($request, 'events');
             $events = $eventsRaw === null ? null : EventChain::rowsFromJson($eventsRaw);
+            if (is_array($record) && ($record['version'] ?? null) === 2) {
+                return $this->verifyData($request, $record, $eventsRaw, $events);
+            }
+            $pdf = $this->part($request, 'pdf');
             if ($pdf === null || ($eventsRaw !== null && ! is_array($events))) {
                 throw new SignError('invalid_request', 'Send pdf and completion, and events as a JSON list when present.');
             }
@@ -46,6 +49,28 @@ final class PublicController extends Controller
 
             return new JsonResponse($verifier->verify($pdf, $record, $events === null ? null : array_values($events)));
         });
+    }
+
+    /**
+     * A version-2 (data mode) completion: the data as JSON text (canonicalised
+     * by the verifier, never decoded with assoc here, so {} and [] stay apart),
+     * optional events and signature records.
+     *
+     * @param  array<string, mixed>  $record
+     * @param  list<array<string, mixed>>|null  $events
+     */
+    private function verifyData(Request $request, array $record, ?string $eventsRaw, ?array $events): Response
+    {
+        $data = $this->part($request, 'data');
+        $sigRaw = $this->part($request, 'signatures');
+        $signatures = $sigRaw === null ? null : json_decode($sigRaw, true, 64);
+        if ($data === null || ($eventsRaw !== null && ! is_array($events)) || ($sigRaw !== null && (! is_array($signatures) || ! array_is_list($signatures)))) {
+            throw new SignError('invalid_request', 'Send data (JSON text) and completion, and events and signatures as JSON lists when present.');
+        }
+        $key = $this->signing->publicKey();
+        $verifier = new Verifier([$key['key_id'] => $key['public_key']] + $this->previousKeys);
+
+        return new JsonResponse($verifier->verifyData($data, $record, $events === null ? null : array_values($events), $signatures));
     }
 
     private int $read = 0;

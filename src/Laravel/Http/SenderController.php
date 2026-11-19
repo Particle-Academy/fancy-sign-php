@@ -34,7 +34,7 @@ final class SenderController extends Controller
     public function store(Request $request): Response
     {
         return $this->run(fn () => new JsonResponse($this->signing->create(
-            $request->only(['title', 'document', 'signers', 'settings']), $this->actor($request), $this->policy->orgId($request),
+            $this->input($request), $this->actor($request), $this->policy->orgId($request),
         ), 201));
     }
 
@@ -48,7 +48,7 @@ final class SenderController extends Controller
         return $this->run(function () use ($request, $id) {
             $this->mine($request, $id);
 
-            return new JsonResponse($this->signing->update($id, $request->only(['title', 'document', 'signers', 'settings']), $this->actor($request)));
+            return new JsonResponse($this->signing->update($id, $this->input($request), $this->actor($request)));
         });
     }
 
@@ -67,6 +67,26 @@ final class SenderController extends Controller
             $this->mine($request, $id);
 
             return new JsonResponse($this->signing->void($id, (string) $request->input('reason', ''), $this->actor($request)));
+        });
+    }
+
+    /** Data mode: invite one signer, when the host decides. */
+    public function invite(Request $request, string $id, string $signerId): Response
+    {
+        return $this->run(function () use ($request, $id, $signerId) {
+            $this->mine($request, $id);
+
+            return new JsonResponse($this->signing->invite($id, $signerId, $this->actor($request)));
+        });
+    }
+
+    /** Data mode: every signature record so far, with its mark. */
+    public function signatures(Request $request, string $id): Response
+    {
+        return $this->run(function () use ($request, $id) {
+            $this->mine($request, $id);
+
+            return new JsonResponse($this->signing->signatures($id));
         });
     }
 
@@ -103,10 +123,32 @@ final class SenderController extends Controller
     public function document(Request $request, string $id): Response
     {
         return $this->run(function () use ($request, $id) {
-            $this->mine($request, $id);
+            if (($this->mine($request, $id)['document']['mode'] ?? 'pdf') === 'data') {
+                return $this->data($this->signing->dataDocument($id));
+            }
 
             return $this->pdf($this->signing->currentDocument($id), "{$id}.pdf");
         });
+    }
+
+    /**
+     * The create/update input. `data` is read from the RAW body with JSON
+     * objects kept as objects: $request->only() decodes with assoc: true, which
+     * turns {} into [] and {"0": "a"} into ["a"], and the host's data_sha256
+     * would no longer match. A non-object `data` is passed on as JSON text, so
+     * it is refused for what it is.
+     *
+     * @return array<string, mixed>
+     */
+    private function input(Request $request): array
+    {
+        $input = $request->only(['title', 'document', 'signers', 'settings', 'fields', 'data_sha256', 'data_profile']);
+        $raw = json_decode((string) $request->getContent(), false, 512);
+        if ($raw instanceof \stdClass && property_exists($raw, 'data')) {
+            $input['data'] = $raw->data instanceof \stdClass ? $raw->data : (string) json_encode($raw->data);
+        }
+
+        return $input;
     }
 
     /** @return array<string, mixed> */

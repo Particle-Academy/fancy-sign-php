@@ -222,3 +222,115 @@ function fsPvText(string $pdf): array
 
     return array_map(fn (array $p) => $p['text'], $read['pages']);
 }
+
+// ---- data mode (CC-fancy-0052), shared by the Data* tests
+
+/** Plan vector d0007's sha256: the fsig-data-1 hash of fdmQuote(). */
+const FDM_QUOTE_SHA = '9f3a6327d5c426994325ae9037518f595c604153944915a21236aa728e9ed2a9';
+
+/** Plan vector d0007: opaque quote data, as the host's own JSON text (not canonical). */
+function fdmQuote(): string
+{
+    $rows = json_decode((string) file_get_contents(__DIR__.'/Conformance/fsig-data-1-vectors.json'), true, 8, JSON_THROW_ON_ERROR);
+
+    return (string) array_column($rows, 'input', 'id')['d0007'];
+}
+
+/** A data-mode create() input: Alice (and Bob) sign the quote. `$over` replaces top-level keys. */
+function fdmInput(array $over = [], bool $bob = false): array
+{
+    $signers = [['id' => 'alice', 'name' => 'Alice Example', 'email' => 'alice@example.com']];
+    $fields = [
+        ['id' => 'alice-sig', 'signer' => 'alice', 'kind' => 'signature', 'anchor' => ['pointer' => '/lines'], 'label' => 'Buyer'],
+        ['id' => 'alice-date', 'signer' => 'alice', 'kind' => 'date_signed'],
+    ];
+    if ($bob) {
+        $signers[] = ['id' => 'bob', 'name' => 'Bob Example', 'email' => 'bob@example.com'];
+        $fields[] = ['id' => 'bob-sig', 'signer' => 'bob', 'kind' => 'signature'];
+    }
+
+    return array_replace(['title' => 'Quote Q-1001', 'settings' => ['mode' => 'data'], 'signers' => $signers,
+        'data' => fdmQuote(), 'data_sha256' => FDM_QUOTE_SHA, 'fields' => $fields], $over);
+}
+
+/** Create and send a data-mode envelope. Nobody is invited yet. */
+function fdmSent(array $h, array $over = [], bool $bob = false, ?string $org = null): array
+{
+    $env = $h['signing']->create(fdmInput($over, $bob), 'user:1', $org);
+
+    return $h['signing']->send($env['id'], 'user:1');
+}
+
+/** Invite one signer (the host's call), and return their link token. */
+function fdmInvite(array $h, string $id, string $who): string
+{
+    $h['signing']->invite($id, $who, 'user:1');
+
+    return $h['mailer']->token("{$who}@example.com");
+}
+
+/** From the link to an open session: view code, consent, the data fetched. */
+function fdmOpen(array $h, string $token, string $who): string
+{
+    $h['signing']->requestCode($token, 'view', fsCtx());
+    $session = $h['signing']->verifyCode($token, 'view', $h['mailer']->code("{$who}@example.com", 'view'), fsCtx())['session'];
+    $h['signing']->consent($token, $session, $h['signing']->config()->consentVersion(), fsCtx());
+    $h['signing']->document($token, $session, fsCtx());
+
+    return $session;
+}
+
+/** The browser's rendering claim. */
+function fdmRender(array $h, string $token, string $session, int $pages = 1, string $renderer = 'host quote-v7 @ host-app 2026.11.19'): void
+{
+    $h['signing']->documentRendered($token, $session, ['data_sha256' => FDM_QUOTE_SHA, 'renderer' => $renderer, 'pages' => $pages], fsCtx());
+}
+
+/** Sign every field of `$who` with a fresh accept code and the data hash. `$extra` overrides the input. */
+function fdmSign(array $h, string $token, string $session, string $who, array $extra = []): array
+{
+    $fields = [];
+    foreach ($h['signing']->signerView($token, $session)['fields'] as $f) {
+        $fields[$f['id']] = true;
+    }
+    $h['signing']->requestCode($token, 'accept', fsCtx(), $session);
+
+    return $h['signing']->sign($token, $session, $extra + [
+        'fields' => $fields, 'mark' => fsMark(), 'adoption' => $h['signing']->config()->adoptionText(),
+        'code' => $h['mailer']->code("{$who}@example.com", 'accept'), 'data_sha256' => FDM_QUOTE_SHA,
+    ], fsCtx());
+}
+
+/** Invite, open, render and sign, as one signer. */
+function fdmSignAs(array $h, string $id, string $who, int $pages = 1): array
+{
+    $token = fdmInvite($h, $id, $who);
+    $session = fdmOpen($h, $token, $who);
+    fdmRender($h, $token, $session, $pages);
+
+    return fdmSign($h, $token, $session, $who);
+}
+
+/** @return list<string> the envelope's event types, in order */
+function fdmTypes(array $h, string $id): array
+{
+    return array_column($h['signing']->events($id), 'type');
+}
+
+/** @return list<string> who has been mailed a link, in order */
+function fdmLinked(array $h): array
+{
+    return array_values(array_map(fn (array $m) => strstr($m['to'], '@', true), array_filter($h['mailer']->sent, fn (array $m) => $m['kind'] === 'link')));
+}
+
+/** An event's data as an array, whether the store kept it as an array or a stdClass. */
+function fdmData(array $event): array
+{
+    return json_decode(json_encode($event['data'], JSON_THROW_ON_ERROR), true, 64, JSON_THROW_ON_ERROR) ?? [];
+}
+
+/** The in-memory store's blob keys. */
+function fdmBlobKeys(InMemoryRepository $repo): array
+{
+    return array_keys((new ReflectionProperty($repo, 'blobs'))->getValue($repo));
+}

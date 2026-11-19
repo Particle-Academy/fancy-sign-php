@@ -54,6 +54,17 @@ abstract class Controller
         return new Context($request->ip(), $request->userAgent());
     }
 
+    /** Data mode: the canonical (fsig-data-1) bytes, exactly as hashed, with their hash. */
+    protected function data(string $bytes): Response
+    {
+        return new Response($bytes, 200, [
+            'Content-Type' => 'application/json',
+            'X-Fancy-Sign-Data-Sha256' => hash('sha256', $bytes),
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
     protected function pdf(string $bytes, string $name): Response
     {
         return new Response($bytes, 200, [

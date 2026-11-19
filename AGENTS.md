@@ -110,6 +110,51 @@ published. Find it then with `search-backend-packages` (stack `php`).
   `final_hash_mismatch`, `prefix_mismatch`, `chain_broken`,
   `chain_head_mismatch`).
 
+## Data mode: the package signs data, the host does the rest (0.7.0)
+
+`settings.mode: "data"` (default `pdf`). Use it when the host renders its own
+page and owns its documents. **In data mode the package seals the data and the
+signing evidence; how the data was displayed to each signer, and any document
+made from it, are the host application's.** Never describe it as proving what a
+signer was shown.
+
+- **Create:** `data` (JSON text, or a tree from `json_decode($json, false)`;
+  an associative array is refused because it cannot tell `{}` from `[]`),
+  `data_sha256` = `FancySign\Data\CanonicalDocument::sha256($json)` (required),
+  `fields` `[{id, signer, kind: signature|initials|date_signed, required?,
+  label?, anchor?: {pointer}}]`, optional `data_profile: "last-word"`. Every
+  signer needs a required `signature` field. `previewData()` answers the same
+  facts without storing anything.
+- **Over HTTP** send `data` as a JSON object in the body; the routes read it
+  from the raw body with objects kept.
+- **`send()` mails no one.** Call `invite($id, $signerId, $actor)` (`POST
+  envelopes/{id}/signers/{signerId}/invite`) per signer, when your workflow
+  decides. Inviting again replaces the link. Under `settings.order:
+  sequential` a later group is refused (`not_your_turn`) until the group before
+  it has signed, and nobody is mailed automatically: you invite the next group.
+- **The signer page** (fancy-sign-ui) fetches the canonical bytes, checks
+  their hash, renders them with the host's template, and posts a
+  `document.rendered` claim `{data_sha256, renderer, pages}`. Put the template
+  AND your app release in `renderer`, e.g. `"quote-v7 @ shop 2026.11.19"`.
+  `sign()` must carry `data_sha256`.
+- **React on `signer.signed` / `signature.sealed`** (the host hook), then read
+  `signatures($id)` (`GET envelopes/{id}/signatures`): each sealed record and
+  the adopted mark, for your own final document. `envelope.completed` means
+  everyone has signed; what happens next is yours.
+- **Verify:** `Verifier::verifySignature($dataJson, $record, $events?)` for one
+  signature, `Verifier::verifyData($dataJson, $completion, $events?,
+  $signatures?)` for the envelope. `$dataJson` may be any export of the same
+  data. `POST verify` takes a version-2 `completion` with `data`.
+- **What the host should do:** keep every template release it has served and
+  name it in `renderer`; keep a template's meaning stable across releases
+  (layout may change, terms may not); render deterministically for a given data
+  and release; print `data_sha256` and the completion token in any final PDF
+  you make; inline anything that carries meaning, because a URL is hashed as a
+  URL. The package does not check `renderer` against your releases; that is
+  yours to keep.
+- **No PDF exists in data mode:** `preview()`, `previewDocument()` and the
+  certificate PDF refuse (the certificate's JSON works).
+
 ## React to what happens: the host hook (0.2.0)
 
 Every event committed to an envelope's chain (the closed set:
@@ -194,8 +239,10 @@ Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e):
   refused today.**
 - **The seal is checked by this package's verifier**, with the host's public
   key. A PDF reader shows no signature panel for it.
-- **`page.viewed` is reported by the signer's browser.** It is a claim, never
-  proof of reading; label it so.
+- **`page.viewed` and `document.rendered` are reported by the signer's
+  browser.** They are claims, never proof of reading; label them so.
+- **Data mode: changing the data means voiding and sending a new envelope.**
+  The data is fixed at send; layout and the signing page stay live.
 - **The ceremony order is enforced:** view code, consent, document opened, then
   sign (`consent_required`, `not_viewed`).
 - **Under `settings.order: sequential` a stalled signer blocks everyone after

@@ -8,6 +8,94 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+**pdf mode is unchanged: consumers do nothing unless they opt in to
+`settings.mode: "data"`.** No migration.
+
+### Added
+
+- **Data mode, `settings.mode: "pdf" | "data"`** (CC-fancy-0052,
+  owner-approved). The default `pdf` is 0.6.0 exactly. In data mode the package
+  signs the HOST's data, an opaque JSON object, and supplies signing
+  primitives only: the host owns its layout, its documents, its mail wording
+  and its workflow. **No PDF is made in data mode.** Fixed at send with the
+  other evidential settings; there is no organisation default.
+  - **Input:** `data` (JSON text or a stdClass tree, never an associative
+    array), `data_sha256` (REQUIRED: the host's own hash of it; a mismatch is
+    `data_hash_mismatch`, 422, nothing stored), `fields` declared beside the
+    data (`{id, signer, kind, required?, label?, anchor?}`, `anchor` an
+    optional RFC 6901 `{pointer}` that must resolve), optional
+    `data_profile`. Every signer needs a required signature field.
+    `settings.final_page` is refused; `per_page` generates one
+    `every-page-{kind}-{signer}` field per signer.
+  - **`FancySign\Data\CanonicalDocument`**: `fsig-data-1`, the canonical byte
+    form (sign/chain canonical JSON with non-integral numbers printed as
+    ECMAScript does). `data_sha256` is sha256 of those bytes. The thirteen
+    CC-0052 plan vectors are reproduced exactly; they are fancy-conformance's
+    new `sign/data` suite.
+  - **`send()` fixes the data and mails no one.** `envelope.sent {mode,
+    data_sha256, data_bytes, fields_sha256}`.
+  - **`Signing::invite($id, $signerId, $actor)`**: the host invites each
+    signer when it decides. A new link (the old one stops working), the host's
+    `SignMailer`, `email.sent` the first time and `reminder.sent` after.
+    Refused in pdf mode, whose `send()` already invites. Route `POST
+    envelopes/{id}/signers/{signerId}/invite`. `remind()` in data mode only
+    re-invites signers the host has invited.
+  - **The signer receives the canonical bytes** (`GET s/{token}/document`:
+    `application/json`, header `X-Fancy-Sign-Data-Sha256`); the first fetch
+    records `document.opened {data_sha256}`. `Signing::signerDocument()` says
+    which mode it served.
+  - **`document.rendered`** (new event, CLIENT claim like `page.viewed`):
+    `Signing::documentRendered()` and `POST s/{token}/events` with `type:
+    document.rendered`, `{data_sha256, renderer, pages}`. `renderer` is the
+    host's template and release. It bounds `page.viewed` in data mode.
+  - **One sealed record per signature**: `fancy-sign.signature` v1, token
+    `fsig_sig_v1_` (`FancySign\Data\SignatureRecord`), put on the chain by the
+    new server event `signature.sealed {signer_id, token, key_id}` right after
+    `signer.signed {data_sha256, ...}`. `sign()` needs `data_sha256`, checked
+    before the accept code. `Signing::signatures($id)` and `GET
+    envelopes/{id}/signatures` return each record with its mark.
+  - **Completion is the reported fact "every signer has signed"**:
+    `fancy-sign.completion` **version 2**, token `fsig_v2_`
+    (`FancySign\Data\DataCompletion`), binding every record. Nothing is rendered
+    and nothing follows it.
+  - **`Verifier::verifyData()`** and **`Verifier::verifySignature()`**, the
+    second proving one signature with no completion. `POST verify` takes a
+    version-2 completion with `data` (JSON text), optional `events` and
+    `signatures`.
+  - **`Signing::previewData()`**: what create() would store, side-effect
+    free. `preview()` and `previewDocument()` refuse a data envelope.
+  - **`settings.order` is a guard in data mode, never a scheduler:** under
+    `sequential`, `invite()` refuses a later group (`not_your_turn`), and when
+    a group finishes the next becomes `pending` with NO mail.
+  - **Optional profile `data_profile: "last-word"`**: refuses an image not
+    inlined as a `data:` URI with `data_external_reference` (422), naming the
+    pointer. The only place the package looks inside the data.
+  - Wire additions, all additive: `settings.mode`; `document.{mode, profile,
+    canonical, data_sha256, data_bytes, fields_sha256}`; `signers[].{invited_at,
+    signature}` (`invited_at` is also set in pdf mode, when `send()` mails);
+    SignerView `envelope.mode`, and in data mode `envelope.{data_sha256,
+    sent_at}` and `signer.signature`.
+  - `Config` `data.{max_bytes, max_depth, max_fields, max_pages}`.
+  - **For a port:** the closed event set gains `document.rendered` (client
+    only) and `signature.sealed`; the error codes gain `data_hash_mismatch` and
+    `data_external_reference`. fancy-conformance `sign/data`, `sign/chain`
+    0034-0037 and `sign/otp` 0001 pin them; until that fixture release is
+    pinned here, CI's DriftTest reads the old fixture set and fails, as the
+    0.6.0 feature commit did.
+- **pdf mode stays byte-identical**, proven three ways: every conformance
+  golden and the existing pdf tests unchanged; `PdfModeUnchangedTest` (mode
+  omitted and `mode: "pdf"` give identical preview PDFs, models, chains and
+  final PDFs); and a cross-version run of five pdf scenarios against the 0.6.0
+  release, whose preview PDF hashes, chains, placements and as-sent, final and
+  certificate texts matched this code exactly.
+
+### Not in this release
+
+- `attachFinal()` (register the host's final PDF hash) and the data-mode
+  certificate PDF: a later release. `certificate($id, 'pdf')` refuses a data
+  envelope; `format=json` works.
+- The fancy-sign-ui data-mode ceremony: fancy-sign-ui's own release.
+
 ## [0.6.0] - 2026-11-19
 
 **Upgrading: Laravel hosts must run `php artisan migrate`** (a `signing_order`

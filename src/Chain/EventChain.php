@@ -18,8 +18,8 @@ use stdClass;
  * The genesis is 64 zeros. `verify()` reads raw rows and names the first
  * problem: `sequence_gap`, `broken_link` or `hash_mismatch`.
  *
- * `source` is `client` only for `page.viewed`, which the signer's browser
- * reports: it is a claim, and is labelled so wherever it is shown.
+ * `source` is `client` only for `page.viewed` and `document.rendered`, which
+ * the signer's browser reports: claims, labelled so wherever they are shown.
  */
 final class EventChain
 {
@@ -31,10 +31,15 @@ final class EventChain
         'otp.locked', 'consent.accepted', 'document.opened', 'page.viewed', 'field.completed', 'mark.adopted',
         'signer.signed', 'signer.declined', 'signer.requested_changes', 'reminder.sent', 'envelope.completed', 'envelope.voided', 'envelope.expired',
         'document.downloaded', 'seal.applied',
+        // CC-fancy-0052, data mode: the browser's rendering claim, and each signature record's token.
+        'document.rendered', 'signature.sealed',
     ];
 
-    /** The only event a client may report. */
-    public const CLIENT_TYPES = ['page.viewed'];
+    /**
+     * The events a client may report, and only a client: claims the signer's
+     * browser makes (a page shown, a rendering of the data), never facts.
+     */
+    public const CLIENT_TYPES = ['page.viewed', 'document.rendered'];
 
     /**
      * @param  array{seq: int, envelope_id: string, at: string, type: string, actor: string, source: string, ip: ?string, user_agent: ?string, data: array<string, mixed>}  $e

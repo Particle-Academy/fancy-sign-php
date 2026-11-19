@@ -39,6 +39,13 @@ final class Config
             'version' => '1',
             'text' => 'I agree to use electronic records and signatures for this document. I can ask the sender for a paper copy, and I can withdraw this consent before I sign by declining.',
         ],
+        // Data mode (settings.mode = data, CC-fancy-0052).
+        'data' => [
+            'max_bytes' => 5242880,        // the data's canonical (fsig-data-1) bytes, 5 MiB
+            'max_depth' => 64,             // nesting of objects and lists; the top object is 1
+            'max_fields' => 500,           // fields declared beside the data
+            'max_pages' => 1000,           // the pages a rendering claim may report
+        ],
         'adoption_text' => 'I adopt this as my signature, and I intend to sign this document.',
         'signature_page_title' => 'Signatures',
     ];

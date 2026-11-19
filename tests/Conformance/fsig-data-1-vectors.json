@@ -1,0 +1,71 @@
+[
+ {
+  "id": "d0001",
+  "note": "keys sorted, list order kept, no whitespace",
+  "input": "{\"b\": 1, \"a\": [true, null, \"x\"]}"
+ },
+ {
+  "id": "d0002",
+  "note": "non-integral numbers print as ECMAScript Number::toString (shortest round trip)",
+  "input": "{\"lineHeight\": 1.15, \"size\": 10.5, \"letterSpacing\": -0.25, \"ratio\": 0.1, \"third\": 0.3333333333333333}"
+ },
+ {
+  "id": "d0003",
+  "note": "an integral number prints as an integer whatever its source form; -0 is 0",
+  "input": "{\"a\": 12.0, \"b\": -0.0, \"c\": 1E2, \"d\": 9007199254740991}"
+ },
+ {
+  "id": "d0004",
+  "note": "below 1e-6 the exponent form, as ECMAScript prints it",
+  "input": "{\"tiny\": 0.0000001, \"edge\": 0.000001, \"neg\": -1.5e-9}"
+ },
+ {
+  "id": "d0005",
+  "note": "an object is an object whatever its keys; {} and [] stay apart",
+  "input": "{\"meta\": {}, \"blocks\": [], \"cells\": {\"0\": \"a\", \"1\": \"b\"}}"
+ },
+ {
+  "id": "d0006",
+  "note": "UTF-8 byte order for keys; slash, non-ASCII and U+2028 raw; controls escaped",
+  "input": "{\"\\ue000\": 1, \"\\ud83d\\ude00\": 2, \"\\u00e9\": 3, \"z\": \"a/b\\u2028c\\u0001d\\n\\\"q\\\"\"}"
+ },
+ {
+  "id": "d0007",
+  "note": "opaque host data: a quote as the host stores it, floats and nested arrays",
+  "input": "{\"quote\": \"Q-1001\", \"currency\": \"USD\", \"customer\": {\"name\": \"Pat Buyer\", \"tags\": []}, \"lines\": [{\"sku\": \"W-1\", \"qty\": 2, \"unit\": 612.5, \"discount\": 0.05}, {\"sku\": \"S-9\", \"qty\": 1, \"unit\": 25, \"options\": {}}], \"tax_rate\": 0.0825, \"totals\": {\"net\": 1250, \"tax\": 103.125}, \"terms\": [\"Net 30\", \"Valid 14 days\"]}"
+ },
+ {
+  "id": "d0008",
+  "note": "refused: an integral number outside the safe-integer range",
+  "input": "{\"n\": 9007199254740993}",
+  "refused": true
+ },
+ {
+  "id": "d0009",
+  "note": "refused: an integral number written as a float beyond 2^53",
+  "input": "{\"n\": 1e21}",
+  "refused": true
+ },
+ {
+  "id": "d0010",
+  "note": "refused: a lone surrogate",
+  "input": "{\"s\": \"\\ud800\"}",
+  "refused": true
+ },
+ {
+  "id": "d0011",
+  "note": "refused: the top level is not an object",
+  "input": "[1, 2]",
+  "refused": true
+ },
+ {
+  "id": "d0012",
+  "note": "nested arrays of arrays with floats, mixed with objects and nulls",
+  "input": "{\"grid\": [[0.5, 1, [2.25, []]], [{}, null, -3.75]], \"weights\": [[0.1, 0.2], [0.30000000000000004]]}"
+ },
+ {
+  "id": "d0013",
+  "note": "the empty object is valid data",
+  "input": "{}"
+ }
+]

@@ -40,6 +40,10 @@ final class SignError extends RuntimeException
         'limit_exceeded' => 429,
         // settings.order sequential: this signer's group has not been invited yet.
         'not_your_turn' => 409,
+        // Data mode (CC-fancy-0052): the data does not hash to data_sha256, at create, update or sign.
+        'data_hash_mismatch' => 422,
+        // Data mode, profile last-word: an image the signed hash would not cover.
+        'data_external_reference' => 422,
     ];
 
     public readonly int $status;

@@ -42,14 +42,26 @@ final class SignerController extends Controller
 
     public function document(Request $request, string $token): Response
     {
-        return $this->run(fn () => $this->pdf($this->signing->document($token, $this->session($request), $this->ctx($request)), 'document.pdf'));
+        return $this->run(function () use ($request, $token) {
+            $doc = $this->signing->signerDocument($token, $this->session($request), $this->ctx($request));
+
+            return $doc['mode'] === 'data' ? $this->data($doc['bytes']) : $this->pdf($doc['bytes'], 'document.pdf');
+        });
     }
 
     public function events(Request $request, string $token): Response
     {
         return $this->run(function () use ($request, $token) {
-            if ($request->input('type') !== 'page.viewed') {
-                throw new \FancySign\SignError('invalid_request', 'Only page.viewed may be reported.');
+            $type = $request->input('type');
+            if ($type === 'document.rendered') {
+                // Data mode: which presentation the browser says it showed. A claim.
+                $this->signing->documentRendered($token, $this->session($request),
+                    $request->only(['data_sha256', 'renderer', 'pages']), $this->ctx($request));
+
+                return new JsonResponse(['recorded' => true], 202);
+            }
+            if ($type !== 'page.viewed') {
+                throw new \FancySign\SignError('invalid_request', 'Only page.viewed and document.rendered may be reported.');
             }
             $this->signing->pageViewed($token, $this->session($request), $request->input('page'), $request->input('ms'), $this->ctx($request));
 
@@ -60,7 +72,7 @@ final class SignerController extends Controller
     public function sign(Request $request, string $token): Response
     {
         return $this->run(fn () => new JsonResponse($this->signing->sign($token, $this->session($request),
-            $request->only(['fields', 'mark', 'adoption', 'code', 'passkey']), $this->ctx($request))));
+            $request->only(['fields', 'mark', 'adoption', 'code', 'passkey', 'data_sha256']), $this->ctx($request))));
     }
 
     public function requestChanges(Request $request, string $token): Response

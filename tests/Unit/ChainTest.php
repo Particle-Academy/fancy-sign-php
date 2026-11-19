@@ -28,3 +28,21 @@ it('refuses an event type outside the closed set', function () {
 it('verifies an empty chain as ok with the genesis head', function () {
     expect(EventChain::verify([]))->toBe(['ok' => true, 'checked' => 0, 'head' => EventChain::GENESIS]);
 });
+
+// CC-fancy-0052 (data mode): two events join the closed set.
+
+function fsChainEvent(string $type, string $source): array
+{
+    return ['envelope_id' => '01JD3XAMPLE', 'at' => '2026-11-19T12:00:00Z', 'type' => $type, 'actor' => 'signer:alice',
+        'source' => $source, 'ip' => null, 'user_agent' => null, 'data' => ['x' => 1]];
+}
+
+it('admits document.rendered from the client only: a browser claim, like page.viewed', function () {
+    expect(EventChain::append(null, fsChainEvent('document.rendered', 'client'))['source'])->toBe('client')
+        ->and(fn () => EventChain::append(null, fsChainEvent('document.rendered', 'server')))->toThrow(InvalidArgumentException::class);
+});
+
+it('admits signature.sealed from the server only', function () {
+    expect(EventChain::append(null, fsChainEvent('signature.sealed', 'server'))['type'])->toBe('signature.sealed')
+        ->and(fn () => EventChain::append(null, fsChainEvent('signature.sealed', 'client')))->toThrow(InvalidArgumentException::class);
+});

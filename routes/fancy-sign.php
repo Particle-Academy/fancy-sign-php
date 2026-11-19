@@ -24,6 +24,9 @@ Route::prefix($prefix)->name('fancy-sign.')->group(function (): void {
         Route::post('envelopes/{id}/send', [SenderController::class, 'send'])->name('envelopes.send');
         Route::post('envelopes/{id}/void', [SenderController::class, 'void'])->name('envelopes.void');
         Route::post('envelopes/{id}/remind', [SenderController::class, 'remind'])->name('envelopes.remind');
+        // Data mode (CC-fancy-0052): the host invites each signer, and reads each signature record.
+        Route::post('envelopes/{id}/signers/{signerId}/invite', [SenderController::class, 'invite'])->name('envelopes.invite');
+        Route::get('envelopes/{id}/signatures', [SenderController::class, 'signatures'])->name('envelopes.signatures');
         Route::get('envelopes/{id}/events', [SenderController::class, 'events'])->name('envelopes.events');
         Route::get('envelopes/{id}/certificate', [SenderController::class, 'certificate'])->name('envelopes.certificate');
         Route::get('envelopes/{id}/document', [SenderController::class, 'document'])->name('envelopes.document');
