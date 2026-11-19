@@ -8,6 +8,10 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+### Changed
+
+- CI: re-pin org third-party allowlist to 2614224
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

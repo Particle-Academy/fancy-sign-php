@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Particle-Academy/.github
-          ref: 3c90e2d99e8bb4234645edb5ff26168169bea247
+          ref: 26142248374e6cc6d6fcb83b82833442cc4be2ef
           path: .lab-cert-verifier
           persist-credentials: false
 
@@ -74,7 +74,7 @@ jobs:
           DYLD_LIBRARY_PATH: ''
           PIN_ROOT: .lab-cert-verifier
           PIN_DIR: .lab-cert-verifier/lab-certificates
-          PIN_SHA: 3c90e2d99e8bb4234645edb5ff26168169bea247
+          PIN_SHA: 26142248374e6cc6d6fcb83b82833442cc4be2ef
           PIN_SHA256: |
             b836599eccafc41dfa8ce224e0b1e0e23cbeac20de7e0e6401fea400f61b19e5  verify-lab-cert.mjs
             d7cb3282119aae83fd8cc1ffe7472b1fa2874734a2f956bb53e849561c634db5  lab-cert-keys.json
