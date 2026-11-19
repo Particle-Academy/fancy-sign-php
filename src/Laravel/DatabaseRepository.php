@@ -76,12 +76,18 @@ final class DatabaseRepository implements Repository
         $r = $this->db->table('fancy_sign_org_settings')->where('org_id', $orgId)->first();
 
         return $r === null ? null : ['org_id' => (string) $r->org_id, 'per_page' => (string) $r->per_page, 'final_page' => (string) ($r->final_page ?? 'always'),
-            'updated_by' => $r->updated_by, 'updated_at' => $r->updated_at];
+            'order' => (string) ($r->signing_order ?? 'parallel'), 'updated_by' => $r->updated_by, 'updated_at' => $r->updated_at];
     }
 
+    /** `order` is a reserved word in SQL, so its column is `signing_order`. */
     public function saveOrgSettings(array $settings): void
     {
-        $this->db->table('fancy_sign_org_settings')->updateOrInsert(['org_id' => $settings['org_id']], $settings);
+        $row = $settings;
+        unset($row['order']);
+        if (array_key_exists('order', $settings)) {
+            $row['signing_order'] = $settings['order'];
+        }
+        $this->db->table('fancy_sign_org_settings')->updateOrInsert(['org_id' => $settings['org_id']], $row);
     }
 
     public function putLink(string $tokenHash, string $envelopeId, string $signerId): void

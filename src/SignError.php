@@ -38,6 +38,8 @@ final class SignError extends RuntimeException
         'already_declined' => 409,
         'step_up_required' => 401,
         'limit_exceeded' => 429,
+        // settings.order sequential: this signer's group has not been invited yet.
+        'not_your_turn' => 409,
     ];
 
     public readonly int $status;

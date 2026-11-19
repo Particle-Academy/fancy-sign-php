@@ -26,7 +26,7 @@ function fsEveryPage(array $env): array
 it('defaults an organisation to no per-page marks', function () {
     $h = fsHarness();
 
-    expect($h['signing']->orgSettings('org-1'))->toBe(['org_id' => 'org-1', 'per_page' => 'none', 'final_page' => 'always', 'updated_by' => null, 'updated_at' => null]);
+    expect($h['signing']->orgSettings('org-1'))->toBe(['org_id' => 'org-1', 'per_page' => 'none', 'final_page' => 'always', 'order' => 'parallel', 'updated_by' => null, 'updated_at' => null]);
 });
 
 it('applies the org admin\'s per-page initials to every envelope of that org', function () {

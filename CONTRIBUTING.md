@@ -66,6 +66,12 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
   rendering it after the content adds no page; otherwise it is the signature
   page. Without a section, the reference and hash are a footer line drawn by
   `Incremental::overlay`, so the as-sent prefix property still holds.
+- **`settings.order: parallel` is 0.5.0 exactly.** Signer `order` input is
+  read only under `sequential`; under `parallel` it stays the list position.
+  `SigningOrderTest` pins the 0.5.0 chain for a two-signer run, and the
+  conformance goldens (`sign/*` scenarios) must not move. A `waiting` signer
+  has no link; `openLink()` refuses one anyway (`not_your_turn`) before any
+  event, so a planted or replayed link reveals nothing.
 - **Every chain event goes through `Signing::event()`**, which tells the host
   hook (`tell()`) after the store returns. Never append to a chain any other
   way, or the host silently misses an event. The hook can never fail the

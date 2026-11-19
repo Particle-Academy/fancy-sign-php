@@ -39,6 +39,13 @@ No third-party code.
   signer has no required signature field. Without a generated section, the
   envelope reference and content hash are printed in the last page's footer.
   An organisation admin can set the org's default.
+- **Signing order.** `settings.order` is `parallel` (the default: everyone is
+  mailed at once and may sign in any order) or `sequential`: each signer has an
+  `order`, only the lowest-order group is mailed when the envelope is sent, and
+  the next group is mailed once every signer in the one before has signed.
+  Signers with the same `order` sign in parallel. So a customer signs a quote
+  first and the sender's countersigner after. A link opened before its turn is
+  refused (`not_your_turn`). An organisation admin can set the org's default.
 - **Per-page initials or signatures**, an organisation admin's setting
   (`PUT /fancy-sign/org/settings { per_page }`). When it is on, every envelope
   of that organisation carries it, and a sender cannot turn it off; drafts take
@@ -140,7 +147,7 @@ Sender (your auth):
   POST /fancy-sign/envelopes/{id}/remind      GET  /fancy-sign/envelopes/{id}/events
   GET  /fancy-sign/envelopes/{id}/certificate (?format=json)
   GET  /fancy-sign/envelopes/{id}/document
-  GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page, final_page }  (org admin)
+  GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page, final_page, order }  (org admin)
 
 Signer (link token, then X-Fancy-Sign-Session):
   POST /fancy-sign/s/{token}/otp          { purpose: view|accept }

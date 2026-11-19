@@ -71,9 +71,14 @@ interface Repository
 
     public function blob(string $key): ?string;
 
-    /** @return array{org_id: string, per_page: string, final_page?: string, updated_by: ?string, updated_at: ?string}|null */
+    /** @return array{org_id: string, per_page: string, final_page?: string, order?: string, updated_by: ?string, updated_at: ?string}|null */
     public function orgSettings(string $orgId): ?array;
 
-    /** @param array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string} $settings */
+    /**
+     * `order` (parallel or sequential) arrived in 0.6; a store that does not
+     * keep it reads back as parallel.
+     *
+     * @param  array{org_id: string, per_page: string, final_page: string, order: string, updated_by: ?string, updated_at: ?string}  $settings
+     */
     public function saveOrgSettings(array $settings): void;
 }

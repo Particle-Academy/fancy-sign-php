@@ -76,6 +76,20 @@ published. Find it then with `search-backend-packages` (stack `php`).
   fields keep their `final-signature-{signer}` / `final-date-{signer}` ids;
   under `auto` they are anchored `{signature_section: true}`. The certificate
   (PDF and JSON `reference`) says where the reference and hash are printed.
+- **Who signs when: `settings.order`** (0.6, CC-fancy-0051). `parallel`
+  (default, unchanged from 0.5.0): every signer is mailed at send and any may
+  sign first; a signer's `order` is its list position and any `order` in the
+  input is ignored. `sequential`: give each signer an `order` (a whole number
+  from 1; left out, its list position). `send()` mails only the lowest-order
+  group; everyone else is `status: "waiting"` with no link. When every signer
+  of a group has signed, the next group is mailed (`email.sent`, actor
+  `system`). Equal orders sign in parallel within their group. `signer.signed`
+  fires per signature and `envelope.completed` only after the last. A waiting
+  signer's link is refused with `not_your_turn` (409) before anything is shown
+  or recorded. A decline ends the envelope and nobody later is invited; a
+  request for changes holds the sequence at that signer. `remind()` mails only
+  invited signers who have not finished; `void()` works as ever. Countersign a
+  quote: customer `order: 1`, the sender's countersigner `order: 2`.
 - **Per-page marks are an organisation setting.** `GET`/`PUT
   /fancy-sign/org/settings { per_page: none|initials|signature }`; only an admin
   named by `FancySign\Laravel\OrgAdminPolicy` may change it (the default names
@@ -83,8 +97,9 @@ published. Find it then with `search-backend-packages` (stack `php`).
   refused with `invalid_request`. Framework-free: `orgSettings()` /
   `setOrgSettings()`. The same endpoint takes `final_page: always|auto|never`,
   the org's DEFAULT for `settings.final_page` (a sender may still choose per
-  envelope); left out, it keeps its current value. Laravel hosts run
-  `php artisan migrate` once for its column.
+  envelope); left out, it keeps its current value. Likewise `order:
+  parallel|sequential`, the org's DEFAULT for `settings.order`. Laravel hosts
+  run `php artisan migrate` for their columns (`final_page`, `signing_order`).
 - **Extension points:** bind `FancySign\Mail\SignMailer` (branded mail),
   `FancySign\Laravel\SenderPolicy` (teams; the default lets a sender reach only
   their own envelopes), `FancySign\StepUp\StepUpVerifier` (to allow
@@ -183,6 +198,9 @@ Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e):
   proof of reading; label it so.
 - **The ceremony order is enforced:** view code, consent, document opened, then
   sign (`consent_required`, `not_viewed`).
+- **Under `settings.order: sequential` a stalled signer blocks everyone after
+  them.** Nothing times out on its own: remind them, or void and resend.
+  Signer `order` is honoured ONLY under `sequential`.
 - **Unknown, expired and wrong codes all answer `otp_invalid`**; only
   `otp_locked` is distinct.
 - **The verify endpoint takes the PDF as a multipart file**, not inside JSON.

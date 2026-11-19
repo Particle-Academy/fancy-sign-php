@@ -28,7 +28,7 @@ final class InMemoryRepository implements Repository
     /** @var array<string, string> */
     private array $blobs = [];
 
-    /** @var array<string, array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string}> */
+    /** @var array<string, array{org_id: string, per_page: string, final_page: string, order?: string, updated_by: ?string, updated_at: ?string}> */
     private array $orgs = [];
 
     public function orgSettings(string $orgId): ?array

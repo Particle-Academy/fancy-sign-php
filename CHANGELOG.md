@@ -8,6 +8,41 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+**Upgrading: Laravel hosts must run `php artisan migrate`** (a `signing_order`
+column on `fancy_sign_org_settings`). Nothing else changes unless you opt in.
+
+### Added
+
+- **`settings.order: "parallel" | "sequential"`** on an envelope
+  (CC-fancy-0051, owner-approved). **The default is `parallel`, which behaves
+  exactly as 0.5.0 did; consumers do nothing unless they opt in.** The wire
+  envelope's `settings` gains `order`; an envelope stored before this reads as
+  `parallel`.
+  - `sequential`: each signer may carry an `order` (a whole number from 1 to
+    1000000; left out, its list position). `send()` mails only the lowest-order
+    group; the others are `status: "waiting"` with no link. When every signer
+    of a group has signed, the next group is mailed (`email.sent`, actor
+    `system`). Signers with equal `order` sign in parallel within their group.
+    The existing `signer.signed` event fires per signature;
+    `envelope.completed` fires only after the last group.
+  - Under `parallel` a signer `order` in the input is still ignored (the list
+    position), as in 0.5.0.
+  - A link opened by a waiting signer is refused with the new code
+    **`not_your_turn` (409)**, as the kit error envelope, before any code is
+    sent, any event recorded or the document served.
+  - A decline ends the envelope, so nobody later is invited; a request for
+    changes holds the sequence at that signer. `remind()` mails only invited
+    signers who have not finished; `void()` is unchanged.
+  - Organisation settings take `order` too, as the org's DEFAULT (a sender may
+    still choose per envelope); left out of `PUT /fancy-sign/org/settings`, it
+    keeps the current value. Laravel hosts: run `php artisan migrate` for the
+    new `signing_order` column (`order` is a reserved word in SQL); a row
+    without it reads as `parallel`. A custom `Repository` now receives `order`
+    in `saveOrgSettings()`; one that does not store it reads back as
+    `parallel`.
+  - The fancy-conformance `sign/otp` error-code row gains `not_your_turn`
+    (a contract change for a port; no other golden moved).
+
 ## [0.5.0] - 2026-11-19
 
 **Upgrading: Laravel hosts must run `php artisan migrate`.** This release adds

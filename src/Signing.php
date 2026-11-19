@@ -98,7 +98,7 @@ final class Signing
         $merged = [
             'title' => $input['title'] ?? $env['title'],
             'document' => $input['document'] ?? $env['document']['model'],
-            'signers' => $input['signers'] ?? array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
+            'signers' => $input['signers'] ?? self::signerInputs($env['signers']),
             'settings' => $input['settings'] ?? $this->storedSettings($env),
         ];
         $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
@@ -119,7 +119,7 @@ final class Signing
             // The org admin changed the per-page setting since the draft was made: send under the one in force now.
             $keep = array_intersect_key($env, array_flip(['id', 'org_id', 'status', 'created_at', 'sent_at', 'completed_at', 'completion', 'created_by']));
             $env = $this->validated(['title' => $env['title'], 'document' => $env['document']['model'],
-                'signers' => array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
+                'signers' => self::signerInputs($env['signers']),
                 'settings' => $this->storedSettings($env)], $keep);
         }
         $model = $this->buildAsSent($env);
@@ -133,6 +133,16 @@ final class Signing
             $field['placement'] = $placed[$field['id']] ?? [];
         }
         unset($field);
+        // settings.order sequential: only the first group is invited; the rest wait, with no link.
+        if (self::isSequential($env)) {
+            $first = min(array_column($env['signers'], 'order'));
+            foreach ($env['signers'] as &$s) {
+                if ($s['order'] !== $first) {
+                    $s['status'] = 'waiting';
+                }
+            }
+            unset($s);
+        }
         $this->repo->putBlob("as-sent/{$id}", $out['bytes']);
         $env['document']['as_sent_sha256'] = hash('sha256', $out['bytes']);
         $env['document']['as_sent_bytes'] = strlen($out['bytes']);
@@ -146,10 +156,46 @@ final class Signing
         $this->repo->saveEnvelope($env);
         $this->event($id, 'envelope.sent', $actor, Context::none(), ['as_sent_sha256' => $env['document']['as_sent_sha256'], 'pages' => $out['pages']]);
         foreach ($env['signers'] as $signer) {
-            $this->mailLink($env, $signer, $actor, 'email.sent');
+            if ($signer['status'] !== 'waiting') {
+                $this->mailLink($env, $signer, $actor, 'email.sent');
+            }
         }
 
         return $this->wire($this->find($id));
+    }
+
+    /** settings.order; an envelope stored before 0.6 has none and is parallel. */
+    private static function isSequential(array $env): bool
+    {
+        return ($env['settings']['order'] ?? 'parallel') === 'sequential';
+    }
+
+    /**
+     * settings.order sequential, after a signature: when every signer of the
+     * lowest unsigned order is still waiting, the group before it has finished,
+     * so invite that group. Signers of the same order sign in parallel.
+     */
+    private function inviteNextGroup(array $env): void
+    {
+        $unsigned = array_filter($env['signers'], fn (array $s) => $s['status'] !== 'signed');
+        $next = min(array_column($unsigned, 'order'));
+        foreach ($unsigned as $signer) {
+            if ($signer['order'] === $next && $signer['status'] === 'waiting') {
+                $this->updateSigner($env['id'], $signer['id'], ['status' => 'pending']);
+                $this->mailLink($env, ['status' => 'pending'] + $signer, 'system', 'email.sent');
+            }
+        }
+    }
+
+    /**
+     * A stored envelope's signers, as input again. Their order is kept: under
+     * parallel it is the list position anyway, under sequential it is the group.
+     *
+     * @return list<array{id: string, name: string, email: string, order: int}>
+     */
+    private static function signerInputs(array $signers): array
+    {
+        return array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email'], 'order' => $s['order']], $signers);
     }
 
     /**
@@ -524,6 +570,8 @@ final class Signing
         $env = $this->find($env['id']);
         if (array_filter($env['signers'], fn (array $s) => $s['status'] !== 'signed') === []) {
             $this->complete($env);
+        } elseif (self::isSequential($env)) {
+            $this->inviteNextGroup($env);
         }
 
         return $this->signerView($token, $session);
@@ -652,6 +700,20 @@ final class Signing
         }
 
         $settings = $this->settings($input['settings'] ?? [], $base['org_id'] ?? null);
+        // settings.order sequential: a signer's `order` is its group (equal orders sign together),
+        // the list position when left out. Under parallel it is the list position, whatever the input
+        // says, exactly as before 0.6.
+        if ($settings['order'] === 'sequential') {
+            foreach ($list as $i => $s) {
+                if (! array_key_exists('order', $s)) {
+                    continue;
+                }
+                if (! is_int($s['order']) || $s['order'] < 1 || $s['order'] > self::MAX_ORDER) {
+                    throw new SignError('invalid_request', "signers[{$i}].order is a whole number from 1 to ".self::MAX_ORDER.'.');
+                }
+                $signers[$s['id'] ?? 's'.($i + 1)]['order'] = $s['order'];
+            }
+        }
         $fields = [];
         foreach (self::fieldNodes($doc['blocks']) as $node) {
             if (! isset($signers[$node['signer']])) {
@@ -709,22 +771,29 @@ final class Signing
     /** settings.final_page: where the generated signature section goes. */
     private const FINAL_PAGE = ['always', 'auto', 'never'];
 
+    /** settings.order: who is invited when. */
+    private const ORDER = ['parallel', 'sequential'];
+
+    /** The largest signer order: small enough to be a safe integer in every port. */
+    private const MAX_ORDER = 1000000;
+
     /**
-     * An organisation's signing settings. Two: `per_page`, the per-page
+     * An organisation's signing settings. Three: `per_page`, the per-page
      * initials or signature an org admin turns on for every envelope of the
      * org (a lock), and `final_page`, the org's default for
-     * settings.final_page (a sender may choose otherwise per envelope). Who is
+     * settings.final_page, and `order`, the org's default for settings.order
+     * (both defaults: a sender may choose otherwise per envelope). Who is
      * an admin is the host's decision (Laravel: OrgAdminPolicy).
      *
-     * @return array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string}
+     * @return array{org_id: string, per_page: string, final_page: string, order: string, updated_by: ?string, updated_at: ?string}
      */
     public function orgSettings(string $orgId): array
     {
         $row = $this->repo->orgSettings($orgId) ?? ['org_id' => $orgId, 'per_page' => 'none', 'updated_by' => null, 'updated_at' => null];
 
-        // A row saved before final_page existed reads as the default.
+        // A row saved before final_page (0.5) or order (0.6) existed reads as the default.
         return ['org_id' => $row['org_id'], 'per_page' => $row['per_page'], 'final_page' => $row['final_page'] ?? 'always',
-            'updated_by' => $row['updated_by'], 'updated_at' => $row['updated_at']];
+            'order' => $row['order'] ?? 'parallel', 'updated_by' => $row['updated_by'], 'updated_at' => $row['updated_at']];
     }
 
     /**
@@ -732,19 +801,19 @@ final class Signing
      * org and to its drafts when they are sent. An envelope already sent keeps
      * what it was sent with, because that is the document the signer sees.
      *
-     * `per_page` left out is none, as it always was; `final_page` left out
-     * keeps the organisation's current value.
+     * `per_page` left out is none, as it always was; `final_page` and `order`
+     * left out keep the organisation's current value.
      *
-     * @param  array{per_page?: mixed, final_page?: mixed}  $input
-     * @return array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string}
+     * @param  array{per_page?: mixed, final_page?: mixed, order?: mixed}  $input
+     * @return array{org_id: string, per_page: string, final_page: string, order: string, updated_by: ?string, updated_at: ?string}
      */
     public function setOrgSettings(string $orgId, array $input, string $actor): array
     {
         if ($orgId === '' || strlen($orgId) > 64) {
             throw new SignError('invalid_request', 'An organisation id is 1 to 64 characters.');
         }
-        if (array_diff(array_keys($input), ['per_page', 'final_page']) !== []) {
-            throw new SignError('invalid_request', 'Organisation settings take per_page and final_page only.');
+        if (array_diff(array_keys($input), ['per_page', 'final_page', 'order']) !== []) {
+            throw new SignError('invalid_request', 'Organisation settings take per_page, final_page and order only.');
         }
         $perPage = $input['per_page'] ?? 'none';
         if (! in_array($perPage, self::PER_PAGE, true)) {
@@ -754,7 +823,11 @@ final class Signing
         if (! in_array($finalPage, self::FINAL_PAGE, true)) {
             throw new SignError('invalid_request', 'final_page is always, auto or never.');
         }
-        $row = ['org_id' => $orgId, 'per_page' => $perPage, 'final_page' => $finalPage, 'updated_by' => $actor, 'updated_at' => $this->at()];
+        $order = array_key_exists('order', $input) ? $input['order'] : $this->orgSettings($orgId)['order'];
+        if (! in_array($order, self::ORDER, true)) {
+            throw new SignError('invalid_request', 'order is parallel or sequential.');
+        }
+        $row = ['org_id' => $orgId, 'per_page' => $perPage, 'final_page' => $finalPage, 'order' => $order, 'updated_by' => $actor, 'updated_at' => $this->at()];
         $this->repo->saveOrgSettings($row);
 
         return $row;
@@ -785,6 +858,8 @@ final class Signing
             'per_page' => $orgPerPage !== 'none' ? $orgPerPage : ($in['per_page'] ?? 'none'),
             // The organisation's final_page is a default, not a lock: a sender may choose per envelope.
             'final_page' => array_key_exists('final_page', $in) ? $in['final_page'] : ($orgId === null ? 'always' : $this->orgSettings($orgId)['final_page']),
+            // settings.order, like final_page: the organisation's is a default, not a lock.
+            'order' => array_key_exists('order', $in) ? $in['order'] : ($orgId === null ? 'parallel' : $this->orgSettings($orgId)['order']),
             'otp' => ['view' => true, 'accept' => true],
             'step_up' => $in['step_up'] ?? 'none',
             'level' => $in['level'] ?? 'ses',
@@ -796,6 +871,9 @@ final class Signing
         }
         if (! in_array($s['final_page'], self::FINAL_PAGE, true)) {
             throw new SignError('invalid_request', 'settings.final_page is always, auto or never.');
+        }
+        if (! in_array($s['order'], self::ORDER, true)) {
+            throw new SignError('invalid_request', 'settings.order is parallel or sequential.');
         }
         if ($s['level'] !== 'ses') {
             throw new SignError('invalid_request', 'settings.level: only ses is built. Advanced signatures are a later phase.');
@@ -861,6 +939,10 @@ final class Signing
             $env = $this->openEnvelope($env);
         } elseif (in_array($env['status'], ['draft', 'voided', 'expired'], true)) {
             throw new SignError('envelope_not_open', 'This envelope is not open for signing.');
+        }
+        // settings.order sequential: a signer whose group has not been invited sees nothing yet.
+        if ($signer['status'] === 'waiting') {
+            throw new SignError('not_your_turn', 'It is not your turn to sign yet. You will get an email when it is.');
         }
 
         return [$env, $signer];
