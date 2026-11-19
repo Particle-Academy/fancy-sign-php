@@ -8,6 +8,8 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
 **pdf mode is unchanged: consumers do nothing unless they opt in to
 `settings.mode: "data"`.** No migration.
 
