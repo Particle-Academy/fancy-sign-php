@@ -8,6 +8,13 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
+**Upgrading: Laravel hosts must run `php artisan migrate`.** This release adds
+a migration (`final_page` on `fancy_sign_org_settings`). Nothing else changes
+unless you opt in: the default `final_page: always` renders exactly what 0.4.0
+rendered.
+
 ### Added
 
 - **`settings.final_page: "always" | "auto" | "never"`** on an envelope
