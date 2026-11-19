@@ -8,8 +8,11 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-19
+
 **Upgrading: Laravel hosts must run `php artisan migrate`** (a `signing_order`
-column on `fancy_sign_org_settings`). Nothing else changes unless you opt in.
+column on `fancy_sign_org_settings`), and **Laravel 13 is now the minimum**
+(see Changed). Nothing else changes unless you opt in.
 
 ### Added
 
@@ -42,6 +45,17 @@ column on `fancy_sign_org_settings`). Nothing else changes unless you opt in.
     `parallel`.
   - The fancy-conformance `sign/otp` error-code row gains `not_your_turn`
     (a contract change for a port; no other golden moved).
+
+### Changed
+
+- **BREAKING:** Laravel 13 is the minimum; an app on Laravel 12 or older can no
+  longer install this; upgrade Laravel. On Laravel 13, or without Laravel at
+  all, do nothing.
+- composer.json now declares `conflict: laravel/framework <13.0, illuminate/support <13.0`;
+  the core stays framework-free.
+- Dev only: the exact `particle-academy/fancy-conformance` pin in
+  `require-dev` moves from 0.53.0 to 0.56.0, the release carrying the
+  `not_your_turn` row this version's suite asserts. Consumers do nothing.
 
 ## [0.5.0] - 2026-11-19
 

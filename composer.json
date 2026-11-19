@@ -33,11 +33,15 @@
     },
     "require-dev": {
         "laravel/framework": "^13.30",
-        "particle-academy/fancy-conformance": "0.53.0",
+        "particle-academy/fancy-conformance": "0.56.0",
         "pestphp/pest": "^4.0|^5.0"
     },
+    "conflict": {
+        "laravel/framework": "<13.0",
+        "illuminate/support": "<13.0"
+    },
     "suggest": {
-        "illuminate/support": "Only for the optional Laravel bridge: migrations, sender and signer routes, mail through the host's mailer. Laravel 13. The framework-free Signing service needs none of it."
+        "illuminate/support": "Only for the optional Laravel bridge: migrations, sender and signer routes, mail through the host's mailer. Laravel ^13.0. The framework-free Signing service needs none of it."
     },
     "autoload": {
         "psr-4": {
