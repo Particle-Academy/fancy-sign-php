@@ -54,6 +54,18 @@ phase 1, SES. Wire contract: plan section 5.10, as implemented by the routes in
 - **Field placement comes from fine-print.** Node fields by id; the final-page
   fields are `final-signature-{signer}` and `final-date-{signer}`; per-page
   marks fold into one `every-page-{kind}-{signer}` field with many placements.
+- **One build-then-render path for the as-sent document.** `Renderer::build()`
+  makes the model, `Renderer::render()` makes the PDF; `send()`, `preview()`
+  and `previewDocument()` all go through `Signing::buildAsSent()`. Never render
+  the as-sent document any other way.
+- **`final_page: always` is 0.4.0 byte for byte.** `Renderer::section(flow:
+  false)` must stay identical to the blocks fine-print's `Signable` makes for a
+  signature page; `FinalPageTest` compares against `Signable::write` with
+  0.4.0's options. A fine-print change to that page shows up there first.
+- **`auto` is measured, never estimated:** the section flows only when
+  rendering it after the content adds no page; otherwise it is the signature
+  page. Without a section, the reference and hash are a footer line drawn by
+  `Incremental::overlay`, so the as-sent prefix property still holds.
 - **Every chain event goes through `Signing::event()`**, which tells the host
   hook (`tell()`) after the store returns. Never append to a chain any other
   way, or the host silently misses an event. The hook can never fail the

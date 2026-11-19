@@ -75,7 +75,8 @@ final class DatabaseRepository implements Repository
     {
         $r = $this->db->table('fancy_sign_org_settings')->where('org_id', $orgId)->first();
 
-        return $r === null ? null : ['org_id' => (string) $r->org_id, 'per_page' => (string) $r->per_page, 'updated_by' => $r->updated_by, 'updated_at' => $r->updated_at];
+        return $r === null ? null : ['org_id' => (string) $r->org_id, 'per_page' => (string) $r->per_page, 'final_page' => (string) ($r->final_page ?? 'always'),
+            'updated_by' => $r->updated_by, 'updated_at' => $r->updated_at];
     }
 
     public function saveOrgSettings(array $settings): void

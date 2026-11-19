@@ -8,6 +8,46 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+### Added
+
+- **`settings.final_page: "always" | "auto" | "never"`** on an envelope
+  (CC-fancy-0048, owner-approved). **The default is `always`, which renders
+  byte for byte what 0.4.0 rendered; consumers do nothing unless they opt in.**
+  - `auto`: when every signer already has a REQUIRED `signatureField` and
+    `dateSignedField` in the document, no section is generated at all.
+    Otherwise the generated signature section flows after the last content: on
+    the same page when the whole of it fits there, and moved whole to a page of
+    its own (heading included, never split from it) when it does not. Its fields
+    keep their ids (`final-signature-{signer}`, `final-date-{signer}`) and are
+    anchored `{signature_section: true}` instead of `{final_page: true}`.
+  - `never`: nothing is generated, and `create()`, `preview()` and
+    `previewDocument()` refuse (`invalid_request`) an envelope with a signer who
+    has no required `signatureField`.
+  - With no generated section, the envelope reference and content hash are a
+    fixed two-line footer at the bottom left of the LAST page, drawn as an
+    incremental update so the as-sent PDF is still a prefix of the final one.
+  - The certificate of completion now prints the document content SHA-256 and
+    where the reference and hash sit (page and layout); the JSON certificate
+    gains `reference: {envelope, content_sha256, page, placement}` with
+    `placement` one of `signature_page`, `after_content`, `footer`.
+  - Organisation settings take `final_page` too, as the org's DEFAULT (a
+    sender may still choose per envelope; `per_page` stays a lock). Leaving it
+    out of a `PUT /fancy-sign/org/settings` keeps the current value. Laravel
+    hosts: run `php artisan migrate` for the new `final_page` column on
+    `fancy_sign_org_settings`; a row without it reads as `always`. A custom
+    `Repository` now receives `final_page` in `saveOrgSettings()`; one that
+    does not store it reads back as `always`.
+- **`Signing::previewDocument(array $input, ?string $orgId = null): array`**:
+  the as-sent document MODEL, from the same build step `send()` uses: the
+  document with the generated signature section appended as nodes
+  (`signature_section: {placement, start}`), per-page fields as field nodes
+  (`page_fields`), the footer line when there is no section, and the envelope's
+  fields. Reference and hash read `PREVIEW, assigned when sent`. No row, event
+  or mail; refused exactly as `create()`. `Renderer::render($model)` turns it
+  into exactly the `preview()` PDF, and `send()`, `preview()` and
+  `previewDocument()` now share one build-then-render path
+  (`Renderer::build()` + `Renderer::render()`).
+
 ## [0.4.0] - 2026-11-19
 
 ### Added

@@ -3,12 +3,15 @@
 declare(strict_types=1);
 
 use FancySign\Config;
+use FancySign\Events\EnvelopeEventRecorded;
+use FancySign\Listener\SignListener;
 use FancySign\Repository\InMemoryRepository;
 use FancySign\Seal\Ed25519;
 use FancySign\Signing;
 use FancySign\Support\Context;
 use FancySign\Tests\Support\FakeMailer;
 use FancySign\Tests\Support\FrozenClock;
+use FinePrint\Agent;
 
 /**
  * One wired Signing service with an in-memory store, a fake inbox and a frozen
@@ -165,4 +168,57 @@ function fsVerifyUpload(string $pdf, array $fields): array
 function fsHttpEnvelope(): array
 {
     return ['title' => 'Quote Q-1001', 'document' => fsDocument(), 'signers' => [['id' => 'alice', 'name' => 'Alice Example', 'email' => 'alice@example.com']]];
+}
+
+// ---- shared by the preview tests (PreviewTest, FinalPageTest)
+
+/** A harness whose host hook records every event it is told about. */
+function fsPvHarness(array $config = []): array
+{
+    $keys = fsKeys();
+    $mailer = new FakeMailer();
+    $repo = new InMemoryRepository();
+    $told = new class implements SignListener
+    {
+        /** @var list<EnvelopeEventRecorded> */
+        public array $events = [];
+
+        public function recorded(EnvelopeEventRecorded $event): void
+        {
+            $this->events[] = $event;
+        }
+    };
+    $signing = new Signing(
+        repo: $repo,
+        mailer: $mailer,
+        sealSecretKey: $keys['secret'],
+        appKey: str_repeat('k', 32),
+        linkUrl: fn (string $token): string => 'https://app.example.test/sign/'.$token,
+        config: new Config($config),
+        clock: new FrozenClock(),
+        listener: $told,
+    );
+
+    return ['signing' => $signing, 'mailer' => $mailer, 'repo' => $repo, 'told' => $told];
+}
+
+/** Every stored row of the in-memory store, by table. */
+function fsPvRows(InMemoryRepository $repo): array
+{
+    $counts = [];
+    foreach ((new ReflectionClass($repo))->getProperties() as $p) {
+        $v = $p->getValue($repo);
+        $counts[$p->getName()] = $p->getName() === 'events' ? array_sum(array_map('count', $v)) : count($v);
+    }
+
+    return $counts;
+}
+
+/** @return list<string> each page's extracted text */
+function fsPvText(string $pdf): array
+{
+    $read = Agent::read($pdf);
+    expect($read['ok'])->toBeTrue();
+
+    return array_map(fn (array $p) => $p['text'], $read['pages']);
 }

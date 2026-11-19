@@ -73,3 +73,31 @@ it('writes no row, dispatches no event and sends no mail through the Laravel bri
         ->and(fsPvMailCount())->toBe(1);
     expect($dispatched)->toContain('envelope.sent');
 });
+
+it('previewDocument writes no row, dispatches no event and sends no mail through the Laravel bridge', function () {
+    TestApp::boot(fakeMailer: false);
+    $dispatched = [];
+    Event::listen(EnvelopeEventRecorded::class, function (EnvelopeEventRecorded $e) use (&$dispatched): void {
+        $dispatched[] = $e->eventType;
+    });
+    $signing = app(Signing::class);
+    $signing->setOrgSettings('org-1', ['per_page' => 'initials', 'final_page' => 'auto'], 'user:admin');
+    $before = fsPvTableCounts();
+
+    $model = $signing->previewDocument(fsHttpEnvelope(), 'org-1');
+
+    expect($model['signature_section']['placement'])->toBe('after_content')
+        ->and(fsPvTableCounts())->toBe($before)
+        ->and($before['envelopes'])->toBe(0)
+        ->and(fsPvMailCount())->toBe(0);
+    expect($dispatched)->toBe([]);
+
+    // The org's final_page reached the database store and back.
+    expect($signing->orgSettings('org-1')['final_page'])->toBe('auto');
+
+    // The instruments are live.
+    $signing->send($signing->create(fsHttpEnvelope(), 'user:1', 'org-1')['id'], 'user:1');
+    expect(fsPvTableCounts()['envelopes'])->toBe(1)
+        ->and(fsPvMailCount())->toBe(1);
+    expect($dispatched)->toContain('envelope.sent');
+});

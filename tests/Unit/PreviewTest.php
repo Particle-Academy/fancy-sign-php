@@ -2,14 +2,7 @@
 
 declare(strict_types=1);
 
-use FancySign\Config;
-use FancySign\Events\EnvelopeEventRecorded;
-use FancySign\Listener\SignListener;
 use FancySign\Pdf\Renderer;
-use FancySign\Repository\InMemoryRepository;
-use FancySign\Signing;
-use FancySign\Tests\Support\FakeMailer;
-use FancySign\Tests\Support\FrozenClock;
 use FinePrint\Agent;
 use FinePrint\Document;
 
@@ -25,36 +18,6 @@ use FinePrint\Document;
  * the two placeholder lines.
  */
 
-/** A harness whose host hook records every event it is told about. */
-function fsPvHarness(): array
-{
-    $keys = fsKeys();
-    $mailer = new FakeMailer();
-    $repo = new InMemoryRepository();
-    $told = new class implements SignListener
-    {
-        /** @var list<EnvelopeEventRecorded> */
-        public array $events = [];
-
-        public function recorded(EnvelopeEventRecorded $event): void
-        {
-            $this->events[] = $event;
-        }
-    };
-    $signing = new Signing(
-        repo: $repo,
-        mailer: $mailer,
-        sealSecretKey: $keys['secret'],
-        appKey: str_repeat('k', 32),
-        linkUrl: fn (string $token): string => 'https://app.example.test/sign/'.$token,
-        config: new Config(),
-        clock: new FrozenClock(),
-        listener: $told,
-    );
-
-    return ['signing' => $signing, 'mailer' => $mailer, 'repo' => $repo, 'told' => $told];
-}
-
 /** A quote long enough to run onto a second authored page, so per-page marks land more than once. */
 function fsPvInput(array $settings = []): array
 {
@@ -68,18 +31,6 @@ function fsPvInput(array $settings = []): array
         ['id' => 'alice', 'name' => 'Alice Example', 'email' => 'alice@example.com'],
         ['id' => 'bob', 'name' => 'Bob Example', 'email' => 'bob@example.com'],
     ]];
-}
-
-/** Every stored row of the in-memory store, by table. */
-function fsPvRows(InMemoryRepository $repo): array
-{
-    $counts = [];
-    foreach ((new ReflectionClass($repo))->getProperties() as $p) {
-        $v = $p->getValue($repo);
-        $counts[$p->getName()] = $p->getName() === 'events' ? array_sum(array_map('count', $v)) : count($v);
-    }
-
-    return $counts;
 }
 
 /**
@@ -103,15 +54,6 @@ function fsPvStreams(string $pdf): array
     }
 
     return $out;
-}
-
-/** @return list<string> each page's extracted text */
-function fsPvText(string $pdf): array
-{
-    $read = Agent::read($pdf);
-    expect($read['ok'])->toBeTrue();
-
-    return array_map(fn (array $p) => $p['text'], $read['pages']);
 }
 
 /** Preview, then create and send the same input in the same store; both PDFs and the sent envelope. */

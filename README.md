@@ -31,6 +31,14 @@ No third-party code.
   coordinate is ever stored by hand.
 - **A final signature page**, generated and appended, with a signature and a
   date-signed field per signer. It is part of the document the signer sees.
+  `settings.final_page` decides where it goes: `always` (the default) appends
+  it as its own page; `auto` appends nothing when every signer already has a
+  required signature and date field in the document, and otherwise lets the
+  section flow straight after the content, moving it whole to a new page only
+  when it does not fit; `never` appends nothing and refuses an envelope whose
+  signer has no required signature field. Without a generated section, the
+  envelope reference and content hash are printed in the last page's footer.
+  An organisation admin can set the org's default.
 - **Per-page initials or signatures**, an organisation admin's setting
   (`PUT /fancy-sign/org/settings { per_page }`). When it is on, every envelope
   of that organisation carries it, and a sender cannot turn it off; drafts take
@@ -132,7 +140,7 @@ Sender (your auth):
   POST /fancy-sign/envelopes/{id}/remind      GET  /fancy-sign/envelopes/{id}/events
   GET  /fancy-sign/envelopes/{id}/certificate (?format=json)
   GET  /fancy-sign/envelopes/{id}/document
-  GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page }  (org admin)
+  GET  /fancy-sign/org/settings               PUT  /fancy-sign/org/settings  { per_page, final_page }  (org admin)
 
 Signer (link token, then X-Fancy-Sign-Session):
   POST /fancy-sign/s/{token}/otp          { purpose: view|accept }
@@ -188,6 +196,20 @@ those two lines read `PREVIEW, assigned when sent`
 
 ```php
 $pdf = $signing->preview(['title' => 'Quote', 'document' => $doc, 'signers' => $signers], $orgId);
+```
+
+To draw the review from data rather than a PDF,
+`Signing::previewDocument(array $input, ?string $orgId = null): array` returns
+the as-sent document model from the same build step: the document with the
+generated signature section as nodes, the per-page fields as field nodes, the
+footer line when there is no section, and the fields. It has the same
+guarantees as `preview()`, and `(new Renderer())->render($model)['bytes']` is
+exactly the `preview()` PDF.
+
+```php
+$model = $signing->previewDocument(['title' => 'Quote', 'document' => $doc, 'signers' => $signers, 'settings' => ['final_page' => 'auto']], $orgId);
+$model['document'];                        // render it in your own viewer
+$model['signature_section']['placement']; // signature_page, after_content or footer
 ```
 
 ## Reacting to signatures

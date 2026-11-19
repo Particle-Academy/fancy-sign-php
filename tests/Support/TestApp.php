@@ -79,8 +79,9 @@ final class TestApp
             \FancySign\Laravel\FancySignServiceProvider::class] as $provider) {
             $app->register($provider);
         }
-        $migration = require dirname(__DIR__, 2).'/database/migrations/2026_11_13_000001_create_fancy_sign_tables.php';
-        $migration->up();
+        foreach (glob(dirname(__DIR__, 2).'/database/migrations/*.php') ?: [] as $file) {
+            (require $file)->up();
+        }
         $app->boot();
 
         return $app;

@@ -122,7 +122,8 @@ final class Signing
                 'signers' => array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
                 'settings' => $this->storedSettings($env)], $keep);
         }
-        $out = $this->renderAsSent($env);
+        $model = $this->buildAsSent($env);
+        $out = $this->renderAsSent($model);
         $placed = [];
         foreach ($out['fields'] as $f) {
             $key = $f['origin'] === 'page_mark' ? "every-page-{$f['kind']}-{$f['signer']}" : $f['id'];
@@ -136,6 +137,10 @@ final class Signing
         $env['document']['as_sent_sha256'] = hash('sha256', $out['bytes']);
         $env['document']['as_sent_bytes'] = strlen($out['bytes']);
         $env['document']['pages'] = $out['pages'];
+        // Where the reference and content hash were printed, for the certificate.
+        $placement = $model['signature_section']['placement'];
+        $env['document']['reference_placement'] = $placement;
+        $env['document']['reference_page'] = $placement === 'signature_page' ? $out['authoredPages'] + 1 : $out['pages'];
         $env['status'] = 'sent';
         $env['sent_at'] = $this->at();
         $this->repo->saveEnvelope($env);
@@ -162,25 +167,69 @@ final class Signing
      */
     public function preview(array $input, ?string $orgId = null): string
     {
-        $env = $this->validated($input, ['id' => 'preview', 'org_id' => $orgId, 'status' => 'draft', 'created_at' => $this->at(),
-            'sent_at' => null, 'completed_at' => null, 'completion' => null, 'created_by' => null]);
-
-        return $this->renderAsSent($env, preview: true)['bytes'];
+        return $this->renderAsSent($this->buildAsSent($this->previewEnvelope($input, $orgId), preview: true))['bytes'];
     }
 
     /**
-     * The one render path of the as-sent document, for send() and preview().
+     * The as-sent document MODEL send() would render for this input and
+     * organisation, before anything exists: the document with the generated
+     * signature section (when settings.final_page makes one) appended as nodes,
+     * the per-page field nodes, and the footer line when there is no section.
+     * It comes from the same build step send() uses, so rendering it with
+     * Renderer::render() gives exactly the preview() PDF. The reference and
+     * content hash read Renderer::PREVIEW_PLACEHOLDER.
+     *
+     * Side-effect free, refused exactly as create() is, like preview().
+     *
+     * @param  array{title?: mixed, document?: mixed, signers?: mixed, settings?: mixed}  $input  as create()
+     * @return array{document: array<string, mixed>, signature_section: array{placement: string, start: ?int}, reference: string, content_sha256: string, footer: ?array{page: string, lines: list<string>}, page_fields: list<array<string, mixed>>, fields: list<array<string, mixed>>, preview: bool}
+     */
+    public function previewDocument(array $input, ?string $orgId = null): array
+    {
+        return $this->buildAsSent($this->previewEnvelope($input, $orgId), preview: true);
+    }
+
+    /** The envelope a preview stands in for: validated as create() validates, never stored. */
+    private function previewEnvelope(array $input, ?string $orgId): array
+    {
+        return $this->validated($input, ['id' => 'preview', 'org_id' => $orgId, 'status' => 'draft', 'created_at' => $this->at(),
+            'sent_at' => null, 'completed_at' => null, 'completion' => null, 'created_by' => null]);
+    }
+
+    /**
+     * The one build step of the as-sent document, for send(), preview() and
+     * previewDocument().
      *
      * @param  array<string, mixed>  $env
-     * @return array{bytes: string, pages: int, authoredPages: int, fields: list<array<string, mixed>>}
+     * @return array<string, mixed> the model
      */
-    private function renderAsSent(array $env, bool $preview = false): array
+    private function buildAsSent(array $env, bool $preview = false): array
     {
         try {
-            return $this->renderer->asSent($env, (string) $this->config->get('signature_page_title'), $preview);
+            return $this->renderer->build($env, (string) $this->config->get('signature_page_title'), $preview);
         } catch (\FinePrint\Exceptions\SchemaException $e) {
-            throw new SignError('invalid_request', 'The document could not be rendered: '.($e->errors[0]['path'] ?? '').' '.($e->errors[0]['message'] ?? ''));
+            throw self::unrenderable($e);
         }
+    }
+
+    /**
+     * The one render step: a model from buildAsSent() to the PDF.
+     *
+     * @param  array<string, mixed>  $model
+     * @return array{bytes: string, pages: int, authoredPages: int, fields: list<array<string, mixed>>}
+     */
+    private function renderAsSent(array $model): array
+    {
+        try {
+            return $this->renderer->render($model);
+        } catch (\FinePrint\Exceptions\SchemaException $e) {
+            throw self::unrenderable($e);
+        }
+    }
+
+    private static function unrenderable(\FinePrint\Exceptions\SchemaException $e): SignError
+    {
+        return new SignError('invalid_request', 'The document could not be rendered: '.($e->errors[0]['path'] ?? '').' '.($e->errors[0]['message'] ?? ''));
     }
 
     public function void(string $id, string $reason, string $actor): array
@@ -252,13 +301,43 @@ final class Signing
      */
     public function certificate(string $id, string $format = 'pdf'): string|array
     {
-        $env = $this->wire($this->find($id));
+        $stored = $this->find($id);
+        $env = $this->wire($stored);
         $events = $this->repo->events($id);
+        $reference = $this->reference($stored);
         if ($format === 'json') {
-            return ['envelope' => $env, 'completion' => $env['completion'], 'events' => $events];
+            return ['envelope' => $env, 'completion' => $env['completion'], 'events' => $events, 'reference' => $reference];
         }
 
-        return $this->renderer->certificate($env, $events);
+        return $this->renderer->certificate($env, $events, $reference);
+    }
+
+    /**
+     * Where the as-sent document prints the envelope reference and the content
+     * hash, and what they are. Null before send. An envelope sent before 0.5
+     * recorded no placement: it had the signature page, which its final-page
+     * fields locate.
+     *
+     * @return array{envelope: string, content_sha256: string, page: ?int, placement: string}|null
+     */
+    private function reference(array $env): ?array
+    {
+        if ($env['document']['as_sent_sha256'] === null) {
+            return null;
+        }
+        $page = $env['document']['reference_page'] ?? null;
+        if ($page === null) {
+            $pages = [];
+            foreach ($env['fields'] as $f) {
+                if (($f['anchor']['final_page'] ?? false) === true) {
+                    array_push($pages, ...array_column($f['placement'] ?? [], 'page'));
+                }
+            }
+            $page = $pages === [] ? null : min($pages);
+        }
+
+        return ['envelope' => 'Envelope '.$env['id'], 'content_sha256' => Renderer::modelHash($env['document']['model']),
+            'page' => $page, 'placement' => $env['document']['reference_placement'] ?? 'signature_page'];
     }
 
     // ================================================================ signer
@@ -582,9 +661,29 @@ final class Signing
                 'anchor' => ['node' => $node['id']], 'required' => ($node['required'] ?? true) !== false,
                 'label' => is_string($node['label'] ?? null) ? $node['label'] : null, 'placement' => null];
         }
+        // settings.final_page: whether the generated signature section exists at all.
+        $has = [];
+        foreach ($fields as $f) {
+            if ($f['required']) {
+                $has[$f['signer_id']][$f['kind']] = true;
+            }
+        }
+        $finalPage = $settings['final_page'];
+        if ($finalPage === 'never') {
+            foreach ($signers as $sid => $s) {
+                if (! isset($has[$sid]['signature'])) {
+                    throw new SignError('invalid_request', "settings.final_page is never, so every signer needs a required signatureField in the document; signer {$sid} has none.");
+                }
+            }
+        }
+        $covered = array_filter($signers, fn (array $s) => isset($has[$s['id']]['signature'], $has[$s['id']]['date_signed'])) === $signers;
+        $generate = $finalPage === 'always' || ($finalPage === 'auto' && ! $covered);
+        $anchor = $finalPage === 'always' ? ['final_page' => true] : ['signature_section' => true];
         foreach ($signers as $sid => $s) {
-            $fields[] = ['id' => "final-signature-{$sid}", 'signer_id' => $sid, 'kind' => 'signature', 'anchor' => ['final_page' => true], 'required' => true, 'label' => 'Signature', 'placement' => null];
-            $fields[] = ['id' => "final-date-{$sid}", 'signer_id' => $sid, 'kind' => 'date_signed', 'anchor' => ['final_page' => true], 'required' => true, 'label' => 'Date signed', 'placement' => null];
+            if ($generate) {
+                $fields[] = ['id' => "final-signature-{$sid}", 'signer_id' => $sid, 'kind' => 'signature', 'anchor' => $anchor, 'required' => true, 'label' => 'Signature', 'placement' => null];
+                $fields[] = ['id' => "final-date-{$sid}", 'signer_id' => $sid, 'kind' => 'date_signed', 'anchor' => $anchor, 'required' => true, 'label' => 'Date signed', 'placement' => null];
+            }
             if ($settings['per_page'] !== 'none') {
                 $fields[] = ['id' => "every-page-{$settings['per_page']}-{$sid}", 'signer_id' => $sid, 'kind' => $settings['per_page'], 'anchor' => ['every_page' => true], 'required' => true, 'label' => null, 'placement' => null];
             }
@@ -607,16 +706,25 @@ final class Signing
 
     private const PER_PAGE = ['none', 'initials', 'signature'];
 
+    /** settings.final_page: where the generated signature section goes. */
+    private const FINAL_PAGE = ['always', 'auto', 'never'];
+
     /**
-     * An organisation's signing settings. Today one: `per_page`, the per-page
+     * An organisation's signing settings. Two: `per_page`, the per-page
      * initials or signature an org admin turns on for every envelope of the
-     * org. Who is an admin is the host's decision (Laravel: OrgAdminPolicy).
+     * org (a lock), and `final_page`, the org's default for
+     * settings.final_page (a sender may choose otherwise per envelope). Who is
+     * an admin is the host's decision (Laravel: OrgAdminPolicy).
      *
-     * @return array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}
+     * @return array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string}
      */
     public function orgSettings(string $orgId): array
     {
-        return $this->repo->orgSettings($orgId) ?? ['org_id' => $orgId, 'per_page' => 'none', 'updated_by' => null, 'updated_at' => null];
+        $row = $this->repo->orgSettings($orgId) ?? ['org_id' => $orgId, 'per_page' => 'none', 'updated_by' => null, 'updated_at' => null];
+
+        // A row saved before final_page existed reads as the default.
+        return ['org_id' => $row['org_id'], 'per_page' => $row['per_page'], 'final_page' => $row['final_page'] ?? 'always',
+            'updated_by' => $row['updated_by'], 'updated_at' => $row['updated_at']];
     }
 
     /**
@@ -624,22 +732,29 @@ final class Signing
      * org and to its drafts when they are sent. An envelope already sent keeps
      * what it was sent with, because that is the document the signer sees.
      *
-     * @param  array{per_page?: mixed}  $input
-     * @return array{org_id: string, per_page: string, updated_by: ?string, updated_at: ?string}
+     * `per_page` left out is none, as it always was; `final_page` left out
+     * keeps the organisation's current value.
+     *
+     * @param  array{per_page?: mixed, final_page?: mixed}  $input
+     * @return array{org_id: string, per_page: string, final_page: string, updated_by: ?string, updated_at: ?string}
      */
     public function setOrgSettings(string $orgId, array $input, string $actor): array
     {
         if ($orgId === '' || strlen($orgId) > 64) {
             throw new SignError('invalid_request', 'An organisation id is 1 to 64 characters.');
         }
-        if (array_diff(array_keys($input), ['per_page']) !== []) {
-            throw new SignError('invalid_request', 'Organisation settings take per_page only.');
+        if (array_diff(array_keys($input), ['per_page', 'final_page']) !== []) {
+            throw new SignError('invalid_request', 'Organisation settings take per_page and final_page only.');
         }
         $perPage = $input['per_page'] ?? 'none';
         if (! in_array($perPage, self::PER_PAGE, true)) {
             throw new SignError('invalid_request', 'per_page is none, initials or signature.');
         }
-        $row = ['org_id' => $orgId, 'per_page' => $perPage, 'updated_by' => $actor, 'updated_at' => $this->at()];
+        $finalPage = array_key_exists('final_page', $input) ? $input['final_page'] : $this->orgSettings($orgId)['final_page'];
+        if (! in_array($finalPage, self::FINAL_PAGE, true)) {
+            throw new SignError('invalid_request', 'final_page is always, auto or never.');
+        }
+        $row = ['org_id' => $orgId, 'per_page' => $perPage, 'final_page' => $finalPage, 'updated_by' => $actor, 'updated_at' => $this->at()];
         $this->repo->saveOrgSettings($row);
 
         return $row;
@@ -668,6 +783,8 @@ final class Signing
         }
         $s = [
             'per_page' => $orgPerPage !== 'none' ? $orgPerPage : ($in['per_page'] ?? 'none'),
+            // The organisation's final_page is a default, not a lock: a sender may choose per envelope.
+            'final_page' => array_key_exists('final_page', $in) ? $in['final_page'] : ($orgId === null ? 'always' : $this->orgSettings($orgId)['final_page']),
             'otp' => ['view' => true, 'accept' => true],
             'step_up' => $in['step_up'] ?? 'none',
             'level' => $in['level'] ?? 'ses',
@@ -676,6 +793,9 @@ final class Signing
         ];
         if (! in_array($s['per_page'], self::PER_PAGE, true)) {
             throw new SignError('invalid_request', 'settings.per_page is none, initials or signature.');
+        }
+        if (! in_array($s['final_page'], self::FINAL_PAGE, true)) {
+            throw new SignError('invalid_request', 'settings.final_page is always, auto or never.');
         }
         if ($s['level'] !== 'ses') {
             throw new SignError('invalid_request', 'settings.level: only ses is built. Advanced signatures are a later phase.');

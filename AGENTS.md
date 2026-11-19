@@ -53,12 +53,38 @@ published. Find it then with `search-backend-packages` (stack `php`).
   sent` (`Renderer::PREVIEW_PLACEHOLDER`). Show it to the sender before they
   approve a send; never hand it to a signer as the sent document. There is no
   HTTP route for it: call it from your own controller.
+- **Preview as data (CC-fancy-0048):** `Signing::previewDocument($input, ?$orgId)`
+  returns the as-sent document MODEL instead of PDF bytes, from the same build
+  step `send()` uses: `document` (the fine-print document with the generated
+  signature section appended as nodes), `signature_section: {placement, start}`
+  (`start` is the index of the first generated block), `page_fields` (per-page
+  marks as `initialsField`/`signatureField` nodes with `pages: "authored"`),
+  `footer` (the reference lines when there is no section), `fields`, and the
+  placeholder `reference` / `content_sha256`. Draw your review from it (e.g.
+  last-word-ui's DocViewer); `(new Renderer())->render($model)['bytes']` is
+  exactly `preview()`. Same guarantees as `preview()`: nothing stored, sent or
+  recorded. Generated field nodes carry `keepNext`, which fine-print's
+  authoring validator does not list: strip it before validating the model as
+  an authored document.
+- **Where the signature section goes: `settings.final_page`.** `always`
+  (default, unchanged from 0.4.0): a page of its own. `auto`: nothing when every
+  signer already has a required `signatureField` and `dateSignedField`;
+  otherwise the section flows right after the content, moved whole to a new
+  page only when it does not fit. `never`: nothing, and an envelope whose signer
+  lacks a required `signatureField` is refused. Without a section, the envelope
+  reference and content hash are a footer line on the last page. Generated
+  fields keep their `final-signature-{signer}` / `final-date-{signer}` ids;
+  under `auto` they are anchored `{signature_section: true}`. The certificate
+  (PDF and JSON `reference`) says where the reference and hash are printed.
 - **Per-page marks are an organisation setting.** `GET`/`PUT
   /fancy-sign/org/settings { per_page: none|initials|signature }`; only an admin
   named by `FancySign\Laravel\OrgAdminPolicy` may change it (the default names
   nobody, so bind one). When it is on, a sender's envelope that disagrees is
   refused with `invalid_request`. Framework-free: `orgSettings()` /
-  `setOrgSettings()`.
+  `setOrgSettings()`. The same endpoint takes `final_page: always|auto|never`,
+  the org's DEFAULT for `settings.final_page` (a sender may still choose per
+  envelope); left out, it keeps its current value. Laravel hosts run
+  `php artisan migrate` once for its column.
 - **Extension points:** bind `FancySign\Mail\SignMailer` (branded mail),
   `FancySign\Laravel\SenderPolicy` (teams; the default lets a sender reach only
   their own envelopes), `FancySign\StepUp\StepUpVerifier` (to allow
