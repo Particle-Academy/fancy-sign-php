@@ -29,16 +29,28 @@ final class Renderer
     public const GRID = 10000;
 
     /**
+     * What a preview prints where the envelope reference and the content hash
+     * go: neither is assigned before send, and a preview must never be mistaken
+     * for the sent document.
+     */
+    public const PREVIEW_PLACEHOLDER = 'PREVIEW, assigned when sent';
+
+    /**
+     * The as-sent document. With `$preview`, the same render with the envelope
+     * reference and content hash lines reading PREVIEW_PLACEHOLDER, in the same
+     * place: Signing::preview() and Signing::send() both come through here, so
+     * the two cannot drift.
+     *
      * @param  array<string, mixed>  $envelope
      * @return array{bytes: string, pages: int, authoredPages: int, fields: list<array<string, mixed>>}
      */
-    public function asSent(array $envelope, string $pageTitle): array
+    public function asSent(array $envelope, string $pageTitle, bool $preview = false): array
     {
         $signers = array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $envelope['signers']);
         $options = ['signaturePage' => [
             'title' => $pageTitle,
-            'reference' => 'Envelope '.$envelope['id'],
-            'contentHash' => self::modelHash($envelope['document']['model']),
+            'reference' => $preview ? self::PREVIEW_PLACEHOLDER : 'Envelope '.$envelope['id'],
+            'contentHash' => $preview ? self::PREVIEW_PLACEHOLDER : self::modelHash($envelope['document']['model']),
             'signers' => $signers,
         ]];
         $perPage = $envelope['settings']['per_page'];

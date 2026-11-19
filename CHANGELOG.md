@@ -8,6 +8,21 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+### Added
+
+- **`Signing::preview(array $input, ?string $orgId = null): string`**
+  (CC-fancy-0047, owner-approved). The as-sent PDF exactly as `send()` would
+  render it for the same input and organisation, before anything exists: the
+  signature page, per-page initials or signatures from the organisation's
+  `per_page` setting and every signature and date field in its place. It takes
+  what `create()` takes and refuses bad input with the same `SignError`. No
+  envelope, row, event or mail. The envelope reference and content hash lines
+  read `PREVIEW, assigned when sent` (`Renderer::PREVIEW_PLACEHOLDER`), in the
+  same position. `send()` and `preview()` share one render path, and a test
+  holds the two PDFs to the same page count, content streams (every text
+  position and field box) and text apart from those two lines. Additive;
+  consumers do nothing.
+
 ### Changed
 
 - CI: re-pin org third-party allowlist to 2614224

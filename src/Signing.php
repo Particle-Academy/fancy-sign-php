@@ -122,11 +122,7 @@ final class Signing
                 'signers' => array_map(fn (array $s) => ['id' => $s['id'], 'name' => $s['name'], 'email' => $s['email']], $env['signers']),
                 'settings' => $this->storedSettings($env)], $keep);
         }
-        try {
-            $out = $this->renderer->asSent($env, (string) $this->config->get('signature_page_title'));
-        } catch (\FinePrint\Exceptions\SchemaException $e) {
-            throw new SignError('invalid_request', 'The document could not be rendered: '.($e->errors[0]['path'] ?? '').' '.($e->errors[0]['message'] ?? ''));
-        }
+        $out = $this->renderAsSent($env);
         $placed = [];
         foreach ($out['fields'] as $f) {
             $key = $f['origin'] === 'page_mark' ? "every-page-{$f['kind']}-{$f['signer']}" : $f['id'];
@@ -149,6 +145,42 @@ final class Signing
         }
 
         return $this->wire($this->find($id));
+    }
+
+    /**
+     * The as-sent PDF exactly as send() would render it for this input and
+     * organisation, before anything exists: the same validation as create()
+     * (refused with the same SignError), the organisation's per_page setting in
+     * force now, and the same render path as send(). The envelope reference and
+     * content hash lines read Renderer::PREVIEW_PLACEHOLDER in their usual place.
+     *
+     * Side-effect free: no envelope, no row, no event, no mail. It only reads the
+     * organisation's settings.
+     *
+     * @param  array{title?: mixed, document?: mixed, signers?: mixed, settings?: mixed}  $input  as create()
+     * @return string the PDF bytes
+     */
+    public function preview(array $input, ?string $orgId = null): string
+    {
+        $env = $this->validated($input, ['id' => 'preview', 'org_id' => $orgId, 'status' => 'draft', 'created_at' => $this->at(),
+            'sent_at' => null, 'completed_at' => null, 'completion' => null, 'created_by' => null]);
+
+        return $this->renderAsSent($env, preview: true)['bytes'];
+    }
+
+    /**
+     * The one render path of the as-sent document, for send() and preview().
+     *
+     * @param  array<string, mixed>  $env
+     * @return array{bytes: string, pages: int, authoredPages: int, fields: list<array<string, mixed>>}
+     */
+    private function renderAsSent(array $env, bool $preview = false): array
+    {
+        try {
+            return $this->renderer->asSent($env, (string) $this->config->get('signature_page_title'), $preview);
+        } catch (\FinePrint\Exceptions\SchemaException $e) {
+            throw new SignError('invalid_request', 'The document could not be rendered: '.($e->errors[0]['path'] ?? '').' '.($e->errors[0]['message'] ?? ''));
+        }
     }
 
     public function void(string $id, string $reason, string $actor): array

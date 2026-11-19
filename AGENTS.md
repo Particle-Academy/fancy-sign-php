@@ -44,6 +44,15 @@ published. Find it then with `search-backend-packages` (stack `php`).
 - **Without Laravel:** `new Signing(repo:, mailer:, sealSecretKey:, appKey:, linkUrl:)`,
   then `create(...)` and `send(...)`. Implement `FancySign\Repository\Repository`
   for real storage (`InMemoryRepository` is for tests).
+- **Preview before sending (CC-fancy-0047):** `Signing::preview($input, ?$orgId)`
+  takes the same input as `create()` and returns the PDF bytes `send()` would
+  render for that organisation now: signature page, per-page marks from
+  `per_page`, every field in place. It stores nothing, records no event and
+  sends no mail; bad input is refused with the same `SignError` as `create()`.
+  The envelope reference and content hash lines read `PREVIEW, assigned when
+  sent` (`Renderer::PREVIEW_PLACEHOLDER`). Show it to the sender before they
+  approve a send; never hand it to a signer as the sent document. There is no
+  HTTP route for it: call it from your own controller.
 - **Per-page marks are an organisation setting.** `GET`/`PUT
   /fancy-sign/org/settings { per_page: none|initials|signature }`; only an admin
   named by `FancySign\Laravel\OrgAdminPolicy` may change it (the default names

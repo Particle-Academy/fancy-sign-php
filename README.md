@@ -173,6 +173,23 @@ $env = $signing->create(['title' => 'Quote', 'document' => $doc, 'signers' => [[
 $signing->send($env['id'], 'user:1');
 ```
 
+### Preview before sending
+
+`Signing::preview(array $input, ?string $orgId = null): string` returns the PDF
+bytes `send()` would produce for the same input (what `create()` takes) and
+organisation: the signature page, per-page initials or signatures from the
+organisation's `per_page` setting, and every signature and date field in its
+place. Nothing is stored, no event is recorded and no mail is sent. Invalid
+input is refused with the same `SignError` as `create()`.
+
+The envelope reference and the content hash are not assigned before sending, so
+those two lines read `PREVIEW, assigned when sent`
+(`Renderer::PREVIEW_PLACEHOLDER`). Everything else matches the sent document.
+
+```php
+$pdf = $signing->preview(['title' => 'Quote', 'document' => $doc, 'signers' => $signers], $orgId);
+```
+
 ## Reacting to signatures
 
 Every event committed to an envelope's chain reaches the host as
