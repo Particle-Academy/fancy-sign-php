@@ -8,6 +8,8 @@ BREAKING and says what a consumer must do.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
 ### Added
 
 - **`Signing::preview(array $input, ?string $orgId = null): string`**
